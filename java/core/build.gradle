@@ -1,0 +1,73 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        maven {
+            url "https://plugins.gradle.org/m2/"
+        }
+    }
+    dependencies {
+        classpath 'com.google.protobuf:protobuf-gradle-plugin:0.8.18'
+    }
+}
+
+plugins {
+    id 'org.springframework.boot' version '2.6.5'
+    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+    id 'java'
+}
+
+apply plugin: 'com.google.protobuf'
+
+dependencies {
+    compileOnly 'org.projectlombok:lombok:1.18.22'
+    annotationProcessor 'org.projectlombok:lombok:1.18.22'
+
+    testCompileOnly 'org.projectlombok:lombok:1.18.22'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.22'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.8.2'
+    // testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.2.0'
+    testRuntimeOnly 'org.junit.vintage:junit-vintage-engine:5.2.0'
+    testImplementation 'org.junit.platform:junit-platform-engine:1.8.2'
+    testImplementation 'org.mockito:mockito-core:3.4.0'
+    testImplementation 'com.google.truth:truth:1.1.3'
+    testImplementation "io.grpc:grpc-testing:${gradle.ext.projectGrpcversion}"
+    testImplementation 'com.google.guava:guava-testlib:31.0.1-android'
+    testImplementation 'io.perfmark:perfmark-api:0.25.0'
+    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.0-alpha7'
+
+    implementation 'org.slf4j:slf4j-api:2.0.0-alpha7'
+
+    implementation "com.google.protobuf:protobuf-java:${gradle.ext.projectProtobufVersion}"
+    implementation "io.grpc:grpc-protobuf:${gradle.ext.projectGrpcversion}"
+    implementation "io.grpc:grpc-stub:${gradle.ext.projectGrpcversion}"
+    implementation "io.grpc:grpc-core:${gradle.ext.projectGrpcversion}"
+
+    implementation 'org.java-websocket:Java-WebSocket:1.5.2'
+}
+
+test {
+    useJUnitPlatform {
+        includeEngines 'junit-vintage'
+    }
+}
+
+protobuf {
+    protoc { artifact = "com.google.protobuf:protoc:${gradle.ext.projectProtobufVersion}" }
+    plugins {
+        grpc { artifact = "io.grpc:protoc-gen-grpc-java:${gradle.ext.projectGrpcversion}" }
+    }
+    generateProtoTasks {
+        all()*.plugins { grpc {} }
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs 'build/generated/source/proto/main/grpc'
+            srcDirs 'build/generated/source/proto/main/java'
+        }
+    }
+}

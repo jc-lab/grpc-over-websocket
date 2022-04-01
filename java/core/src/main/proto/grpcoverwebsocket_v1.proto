@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package kr.jclab.grpcoverwebsocket.v1;
+
+option java_multiple_files = true;
+option java_package = "kr.jclab.grpcoverwebsocket.core.protocol.v1";
+option java_outer_classname = "ProtocolV1Proto";
+
+import "google/rpc/status.proto";
+
+message HandshakeResult {
+    bool resolved = 1;
+    string message = 2;
+    string metadata = 3;
+}
+
+// Client to Server
+message NewStream {
+    int32 stream_id = 1;
+    string method_name = 10;
+    repeated bytes metadata = 11;
+    bytes payload = 12;
+}
+
+// Server to Client
+message StreamHeader {
+    int32 stream_id = 1;
+    repeated bytes headers = 11;
+}
+
+// Server to Client (?)
+message CloseStream {
+    int32 stream_id = 1;
+    google.rpc.Status status = 10;
+    repeated bytes trailers = 11;
+}
+
+message FinishTransport {
+    google.rpc.Status status = 1;
+}

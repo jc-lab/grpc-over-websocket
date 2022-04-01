@@ -1,0 +1,9 @@
+rootProject.name = 'parent'
+
+gradle.ext.projectGrpcversion = '1.45.1'
+gradle.ext.projectProtobufVersion = '3.19.4'
+
+include 'sample'
+include 'core'
+include 'example'
+
