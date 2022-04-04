@@ -136,6 +136,7 @@ public class GrpcOverWebsocketClientTransport implements
             public void onError(Exception ex) {
                 log.info("[{}] onError", logId, ex);
                 clientListener.onError(GrpcOverWebsocketClientTransport.this, ex);
+                shutdownNow(Status.UNAVAILABLE); // TODO: When only CONNECT FAILURE
             }
 
             @Override
@@ -276,7 +277,7 @@ public class GrpcOverWebsocketClientTransport implements
 
         synchronized (this.lock) {
             if (this.lifecycleManager.transportTerminated()) {
-                callback.onFailure(new StatusException(Status.UNAVAILABLE));
+                callback.onFailure(this.lifecycleManager.getShutdownThrowable());
                 return ;
             }
             sendPingFrameTraced(callback, executor);

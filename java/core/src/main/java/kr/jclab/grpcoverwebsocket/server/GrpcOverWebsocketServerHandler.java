@@ -1,9 +1,10 @@
 package kr.jclab.grpcoverwebsocket.server;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public interface GrpcOverWebsocketServerHandler {
-    default void onStart(GrpcOverWebsocketServer server) {}
+    default void onStart(GrpcOverWebsocketServer server) throws IOException {}
 
     default void onTerminated(GrpcOverWebsocketServer server) {}
 

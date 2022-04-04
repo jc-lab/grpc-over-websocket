@@ -14,7 +14,10 @@ import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SimpleWebsocketServerBuilder extends GrpcOverWebsocketServerBuilder {
     private final GrpcOverWebsocketTransceiver transceiver = new GrpcOverWebsocketTransceiver();
@@ -24,7 +27,7 @@ public class SimpleWebsocketServerBuilder extends GrpcOverWebsocketServerBuilder
     @Getter
     private String fakeAuthority = "";
 
-    public SimpleWebsocketServerBuilder(int port) {
+    public SimpleWebsocketServerBuilder(int port, AtomicBoolean stopOnTerminated) {
         super();
         this.listenAddress = new InetSocketAddress("127.0.0.1", port);
         this.myWebSocketServer = new MyWebSocketServer(port);
@@ -32,27 +35,36 @@ public class SimpleWebsocketServerBuilder extends GrpcOverWebsocketServerBuilder
         this.attachTransceiver(transceiver);
         this.setServerHandler(new GrpcOverWebsocketServerHandler() {
             @Override
-            public void onStart(GrpcOverWebsocketServer server) {
+            public void onStart(GrpcOverWebsocketServer server) throws IOException {
                 myWebSocketServer.start();
+                try {
+                    myWebSocketServer.startFuture.get();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof IOException) {
+                        throw (IOException) e.getCause();
+                    }
+                    e.printStackTrace();
+                }
             }
 
             @Override
             public void onTerminated(GrpcOverWebsocketServer server) {
-//                try {
-//                    myWebSocketServer.stop();
-//                } catch (InterruptedException e) {
-//                    e.printStackTrace();
-//                }
+                if (stopOnTerminated.get()) {
+                    try {
+                        myWebSocketServer.stop();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
             }
         });
     }
 
-    public static SimpleWebsocketServerBuilder forPort(int port) {
-        return new SimpleWebsocketServerBuilder(port);
-    }
-
     private class MyWebSocketServer extends WebSocketServer {
         private CountDownLatch serverLatch = null;
+        public final CompletableFuture<Void> startFuture = new CompletableFuture<>();
 
         public MyWebSocketServer(int port, CountDownLatch serverLatch) {
             super(new InetSocketAddress(port));
@@ -102,12 +114,16 @@ public class SimpleWebsocketServerBuilder extends GrpcOverWebsocketServerBuilder
         @Override
         public void onError(WebSocket conn, Exception ex) {
             ex.printStackTrace();
+            if (!this.startFuture.isDone()) {
+                this.startFuture.completeExceptionally(ex);
+            }
         }
 
         @Override
         public void onStart() {
-            if (serverLatch != null) {
-                serverLatch.countDown();
+            this.startFuture.complete(null);
+            if (this.serverLatch != null) {
+                this.serverLatch.countDown();
             }
         }
 

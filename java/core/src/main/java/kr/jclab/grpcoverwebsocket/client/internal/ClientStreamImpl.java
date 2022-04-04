@@ -6,7 +6,6 @@ import io.grpc.internal.*;
 import kr.jclab.grpcoverwebsocket.client.GrpcOverWebsocketClientTransport;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.CloseStream;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.NewStream;
-import kr.jclab.grpcoverwebsocket.core.protocol.v1.StreamHeader;
 import kr.jclab.grpcoverwebsocket.internal.ByteBufferReadableBuffer;
 import kr.jclab.grpcoverwebsocket.internal.ByteBufferWritableBufferAllocator;
 import kr.jclab.grpcoverwebsocket.protocol.v1.ControlType;

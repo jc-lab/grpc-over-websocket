@@ -11,5 +11,7 @@ public class CancelServerStreamCommand extends OrderedQueue.AbstractQueuedComman
     @Getter
     private final ServerStreamImpl stream;
     @Getter
+    private final boolean remote;
+    @Getter
     private final Status status;
 }

@@ -6,7 +6,6 @@ import com.google.protobuf.GeneratedMessageV3;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.*;
 import io.grpc.internal.*;
-import kr.jclab.grpcoverwebsocket.client.internal.ClientStreamImpl;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.*;
 import kr.jclab.grpcoverwebsocket.internal.*;
 import kr.jclab.grpcoverwebsocket.protocol.v1.*;
@@ -28,7 +27,6 @@ import static com.google.common.base.Preconditions.checkState;
 
 @Slf4j
 public class ServerTransportImpl implements
-        ServerSideClientContext,
         ProtocolHandler<Void>,
         ServerTransport,
         ServerTransportLifecycleManager.LifecycleManagerListener {
@@ -88,7 +86,7 @@ public class ServerTransportImpl implements
                 (cmd) -> {
                     if (cmd instanceof CancelServerStreamCommand) {
                         CancelServerStreamCommand cmdImpl = (CancelServerStreamCommand) cmd;
-                        cmdImpl.getStream().cancelStream(cmdImpl.getStatus(), true);
+                        cmdImpl.getStream().cancelStream(cmdImpl.getStatus(), cmdImpl.isRemote());
                     }
                 }
         );
@@ -98,23 +96,11 @@ public class ServerTransportImpl implements
                 .set(Grpc.TRANSPORT_ATTR_REMOTE_ADDR, session.getRemoteAddress())
                 .build();
     }
-
-    @Override
-    public GrpcWebSocketSession getSession() {
-        return this.session;
-    }
-
-    @Override
-    public void close() {
-        this.session.close();
-        synchronized (this.lock) {
-            this.shutdown();
-        }
-    }
-
+    
     public void onClosedByRemote() {
+        log.info("onClosedByRemote");
         synchronized (this.lock) {
-            this.shutdown();
+            this.lifecycleManager.notifyTerminated(Status.UNKNOWN);
         }
     }
 
@@ -209,7 +195,7 @@ public class ServerTransportImpl implements
     @Override
     public void handleNewStream(Void unused, NewStream payload) {
         int streamId = payload.getStreamId();
-        log.info("Client[{}] new stream {}", this.getSession().getId(), streamId);
+        log.info("Client[{}] new stream {}", this.session.getId(), streamId);
 
         byte[][] serializedMetadata = payload.getMetadataList()
                 .stream()
@@ -259,7 +245,7 @@ public class ServerTransportImpl implements
             log.error("handleGrpcStream: Invalid stream id: " + streamId);
             return ;
         }
-        log.debug("Client[{}, stream={}] handleGrpcStream: {} bytes (flags: {})", this.getSession().getId(), streamId, data.remaining(), flags);
+        log.debug("Client[{}, stream={}] handleGrpcStream: {} bytes (flags: {})", this.session.getId(), streamId, data.remaining(), flags);
         stream.handlePayload(flags, data);
     }
 
@@ -272,8 +258,8 @@ public class ServerTransportImpl implements
             return ;
         }
         Status status = ProtocolHelper.statusFromProto(payload.getStatus());
-        log.info("Client[{}, stream={}] close by client: {}", this.getSession().getId(), streamId, status.getCode());
-        transportQueue.enqueue(new CancelServerStreamCommand(stream, status), true);
+        log.info("Client[{}, stream={}] close by client: {}", this.session.getId(), streamId, status.getCode());
+        transportQueue.enqueue(new CancelServerStreamCommand(stream, true, status), true);
     }
 
     @Override
@@ -283,6 +269,7 @@ public class ServerTransportImpl implements
 
     @Override
     public void shutdown() {
+        log.debug("shutdown");
         synchronized (this.lock) {
             if (this.lifecycleManager != null) {
                 this.lifecycleManager.notifyShutdown(Status.OK);
@@ -292,8 +279,13 @@ public class ServerTransportImpl implements
 
     @Override
     public void shutdownNow(Status reason) {
+        log.debug("shutdownNow");
         synchronized (this.lock) {
             if (this.lifecycleManager == null) {
+                return ;
+            }
+
+            if (this.lifecycleManager.transportTerminated()) {
                 return ;
             }
 
@@ -302,18 +294,11 @@ public class ServerTransportImpl implements
             while (it.hasNext()) {
                 Map.Entry<Integer, ServerStreamImpl> entry = it.next();
                 it.remove();
-                entry.getValue().cancel(reason);
+                entry.getValue().cancelStream(reason, true);
             }
 
-            FinishTransport finishTransport = FinishTransport.newBuilder()
-                    .setStatus(ProtocolHelper.statusToProto(reason))
-                    .build();
-            sendControlMessage(ControlType.FinishTransport, finishTransport);
-
-            this.lifecycleManager.notifyShutdown(reason);
-            if (this.lifecycleManager.transportTerminated()) {
-                return;
-            }
+            this.session.close();
+            this.lifecycleManager.notifyTerminated(reason);
         }
     }
 
@@ -333,7 +318,7 @@ public class ServerTransportImpl implements
     }
 
     public void sendControlMessage(ControlType controlType, GeneratedMessageV3 message) {
-        log.debug("Client[{}] sendControlMessage {}", this.getSession().getId(), controlType);
+        log.debug("Client[{}] sendControlMessage {}", this.session.getId(), controlType);
         ByteBuffer sendBuffer = ProtocolHelper.serializeControlMessage(controlType, message);
         try {
             this.session.sendMessage(sendBuffer);
@@ -355,7 +340,7 @@ public class ServerTransportImpl implements
 //            flags |= GrpcStreamFlag.EndOfFrame.getValue();
 //        }
 
-        log.debug("Client[{}, stream={}] sendGrpcPayload {} bytes", this.getSession().getId(), streamId, size - 6);
+        log.debug("Client[{}, stream={}] sendGrpcPayload {} bytes", this.session.getId(), streamId, size - 6);
         ByteBuffer sendBuffer = ByteBuffer.allocate(size)
                 .order(ByteOrder.LITTLE_ENDIAN)
                 .put(PayloadType.GRPC.getValue())
@@ -374,7 +359,14 @@ public class ServerTransportImpl implements
 
     @Override
     public void afterShutdown() {
-        this.lifecycleManager.notifyTerminated(lifecycleManager.getShutdownStatus());
+        if (!this.lifecycleManager.transportTerminated()) {
+            FinishTransport finishTransport = FinishTransport.newBuilder()
+                    .setStatus(ProtocolHelper.statusToProto(this.lifecycleManager.getShutdownStatus()))
+                    .build();
+            sendControlMessage(ControlType.FinishTransport, finishTransport);
+        }
+
+        this.lifecycleManager.notifyTerminated(this.lifecycleManager.getShutdownStatus());
     }
 
     @Override

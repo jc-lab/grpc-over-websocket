@@ -14,9 +14,16 @@ plugins {
     id 'org.springframework.boot' version '2.6.5'
     id 'io.spring.dependency-management' version '1.0.11.RELEASE'
     id 'java'
+    id 'maven-publish'
+    id 'signing'
 }
 
 apply plugin: 'com.google.protobuf'
+
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
 
 dependencies {
     compileOnly 'org.projectlombok:lombok:1.18.22'
@@ -35,7 +42,7 @@ dependencies {
     testImplementation "io.grpc:grpc-testing:${gradle.ext.projectGrpcversion}"
     testImplementation 'com.google.guava:guava-testlib:31.0.1-android'
     testImplementation 'io.perfmark:perfmark-api:0.25.0'
-    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.0-alpha7'
+    testImplementation 'org.slf4j:slf4j-simple:2.0.0-alpha7'
 
     implementation 'org.slf4j:slf4j-api:2.0.0-alpha7'
 
@@ -68,6 +75,54 @@ sourceSets {
         java {
             srcDirs 'build/generated/source/proto/main/grpc'
             srcDirs 'build/generated/source/proto/main/java'
+        }
+    }
+}
+
+publishing {
+    repositories {
+        maven {
+            def releasesRepoUrl = 'https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/'
+            def snapshotsRepoUrl = 'https://s01.oss.sonatype.org/content/repositories/snapshots/'
+            url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
+        }
+    }
+    publications {
+        mavenJava(MavenPublication) {
+            groupId = group
+            artifactId = 'core'
+            from components.java
+//            versionMapping {
+//                usage('java-api') {
+//                    fromResolutionOf('runtimeClasspath')
+//                }
+//                usage('java-runtime') {
+//                    fromResolutionResult()
+//                }
+//            }
+            pom {
+                name = 'core'
+                description = 'GRPC over Websocket'
+                url = 'https://github.com/jc-lab/grpc-over-websocket'
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'jclab'
+                        name = 'Joseph Lee'
+                        email = 'joseph@jc-lab.net'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/jc-lab/grpc-over-websocket.git'
+                    developerConnection = 'scm:git:ssh://git@github.com:jc-lab/grpc-over-websocket.git'
+                    url = 'https://github.com/jc-lab/grpc-over-websocket'
+                }
+            }
         }
     }
 }

@@ -131,7 +131,7 @@ public class ServerStreamImpl extends AbstractServerStream {
         public void deframeFailed(Throwable cause) {
             Status status = Status.fromThrowable(cause);
             transportReportStatus(status);
-            transport.getTransportQueue().enqueue(new CancelServerStreamCommand(ServerStreamImpl.this, status), true);
+            transport.getTransportQueue().enqueue(new CancelServerStreamCommand(ServerStreamImpl.this, false, status), true);
         }
     }
 
@@ -182,7 +182,7 @@ public class ServerStreamImpl extends AbstractServerStream {
 
         @Override
         public void cancel(Status status) {
-            transport.getTransportQueue().enqueue(new CancelServerStreamCommand(ServerStreamImpl.this, status), true);
+            transport.getTransportQueue().enqueue(new CancelServerStreamCommand(ServerStreamImpl.this, false, status), true);
         }
     };
 }
