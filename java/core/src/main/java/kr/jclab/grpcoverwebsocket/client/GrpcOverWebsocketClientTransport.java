@@ -168,6 +168,19 @@ public class GrpcOverWebsocketClientTransport implements
                 .build();
     }
 
+    //region WebSocket
+    @Override
+    public void goAway() {
+        this.shutdown(Status.OK);
+    }
+
+    @Override
+    public void sendHandshakeMessage(ByteBuffer byteBuffer) {
+        ByteBuffer payload = ProtocolHelper.serializeHandshakeMessage(byteBuffer);
+        this.webSocketClient.send(payload);
+    }
+    //endregion
+
     @Override
     public Attributes getAttributes() {
         return this.attributes;
@@ -322,11 +335,6 @@ public class GrpcOverWebsocketClientTransport implements
     @Override
     public InternalLogId getLogId() {
         return this.logId;
-    }
-
-    @Override
-    public void goAway() {
-        this.shutdown(Status.OK);
     }
 
     public void sendControlMessage(ControlType controlType, GeneratedMessageV3 message) {

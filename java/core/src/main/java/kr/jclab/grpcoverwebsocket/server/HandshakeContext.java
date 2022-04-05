@@ -6,9 +6,9 @@ import java.util.concurrent.ScheduledExecutorService;
 public interface HandshakeContext {
     ScheduledExecutorService getScheduledExecutorService();
     GrpcWebSocketSession getSession();
-    void ready(String metadata);
-    void reject(String message, String metadata);
-    void sendMessage(ByteBuffer buffer);
+    void ready(byte[] metadata);
+    void reject(String message, byte[] metadata);
+    void sendHandshakeMessage(ByteBuffer buffer);
 
     default void ready() {
         this.ready(null);

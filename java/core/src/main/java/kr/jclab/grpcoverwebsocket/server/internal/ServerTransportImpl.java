@@ -6,6 +6,7 @@ import com.google.protobuf.GeneratedMessageV3;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.*;
 import io.grpc.internal.*;
+import kr.jclab.grpcoverwebsocket.GrpcOverWebSocket;
 import kr.jclab.grpcoverwebsocket.client.internal.ClientStreamImpl;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.*;
 import kr.jclab.grpcoverwebsocket.internal.*;
@@ -93,6 +94,7 @@ public class ServerTransportImpl implements
         );
 
         this.transportAttributes = Attributes.newBuilder()
+                .set(GrpcOverWebSocket.SESSION, session)
                 .set(Grpc.TRANSPORT_ATTR_LOCAL_ADDR, session.getLocalAddress())
                 .set(Grpc.TRANSPORT_ATTR_REMOTE_ADDR, session.getRemoteAddress())
                 .build();
@@ -123,7 +125,7 @@ public class ServerTransportImpl implements
         }
 
         @Override
-        public void ready(String metadata) {
+        public void ready(byte[] metadata) {
             checkState(handshakeState == HandshakeState.HANDSHAKE, "already handshaked");
             handshakeState = HandshakeState.COMPLETE;
 
@@ -131,7 +133,7 @@ public class ServerTransportImpl implements
 
             HandshakeResult handshakeResult = HandshakeResult.newBuilder()
                     .setResolved(true)
-                    .setMetadata(Optional.ofNullable(metadata).orElse(""))
+                    .setMetadata(Optional.ofNullable(metadata).map(ByteString::copyFrom).orElse(ByteString.EMPTY))
                     .build();
             try {
                 session.sendMessage(ProtocolHelper.serializeControlMessage(ControlType.HandshakeResult, handshakeResult));
@@ -146,7 +148,7 @@ public class ServerTransportImpl implements
         }
 
         @Override
-        public void reject(String message, String metadata) {
+        public void reject(String message, byte[] metadata) {
             checkState(handshakeState == HandshakeState.HANDSHAKE, "already handshaked");
             handshakeState = HandshakeState.FAILURE;
 
@@ -155,7 +157,7 @@ public class ServerTransportImpl implements
             HandshakeResult handshakeResult = HandshakeResult.newBuilder()
                     .setResolved(false)
                     .setMessage(message)
-                    .setMetadata(Optional.ofNullable(metadata).orElse(""))
+                    .setMetadata(Optional.ofNullable(metadata).map(ByteString::copyFrom).orElse(ByteString.EMPTY))
                     .build();
             try {
                 session.sendMessage(ProtocolHelper.serializeControlMessage(ControlType.HandshakeResult, handshakeResult));
@@ -165,12 +167,8 @@ public class ServerTransportImpl implements
         }
 
         @Override
-        public void sendMessage(ByteBuffer data) {
-            ByteBuffer sendBuffer = ByteBuffer.allocate(1 + data.remaining())
-                    .order(ByteOrder.LITTLE_ENDIAN)
-                    .put(PayloadType.HANDSHAKE.getValue())
-                    .put(data);
-            sendBuffer.flip();
+        public void sendHandshakeMessage(ByteBuffer data) {
+            ByteBuffer sendBuffer = ProtocolHelper.serializeHandshakeMessage(data);
             try {
                 session.sendMessage(sendBuffer);
             } catch (IOException e) {

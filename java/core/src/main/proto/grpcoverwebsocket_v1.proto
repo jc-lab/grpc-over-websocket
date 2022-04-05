@@ -11,7 +11,7 @@ import "google/rpc/status.proto";
 message HandshakeResult {
     bool resolved = 1;
     string message = 2;
-    string metadata = 3;
+    bytes metadata = 3;
 }
 
 // Client to Server

@@ -1,6 +1,5 @@
 package kr.jclab.grpcoverwebsocket.protocol.v1;
 
-import com.google.common.collect.Lists;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.GeneratedMessageV3;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -107,6 +106,15 @@ public class ProtocolHelper {
                 );
                 break;
         }
+    }
+
+    public static ByteBuffer serializeHandshakeMessage(ByteBuffer buffer) {
+        ByteBuffer sendBuffer = ByteBuffer.allocate(1 + buffer.remaining())
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .put(PayloadType.HANDSHAKE.getValue())
+                .put(buffer);
+        sendBuffer.flip();
+        return sendBuffer;
     }
 
     public static ByteBuffer serializeControlMessage(ControlType controlType, GeneratedMessageV3 message) {
