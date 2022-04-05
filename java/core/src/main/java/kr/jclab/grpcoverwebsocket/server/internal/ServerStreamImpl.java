@@ -137,7 +137,7 @@ public class ServerStreamImpl extends AbstractServerStream {
     private final Sink sink = new Sink() {
         @Override
         public void writeHeaders(Metadata headers) {
-            log.info("writeHeaders");
+            log.trace("writeHeaders");
             StreamHeader streamHeader = StreamHeader.newBuilder()
                     .setStreamId(streamId)
                     .addAllHeaders(ProtocolHelper.metadataSerialize(headers))

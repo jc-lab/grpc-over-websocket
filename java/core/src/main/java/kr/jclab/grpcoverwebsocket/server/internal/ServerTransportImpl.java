@@ -99,7 +99,7 @@ public class ServerTransportImpl implements
     }
     
     public void onClosedByRemote() {
-        log.info("onClosedByRemote");
+        log.trace("onClosedByRemote");
         synchronized (this.lock) {
             cancelStreamsLocally(Status.UNKNOWN);
             this.lifecycleManager.notifyTerminated(Status.UNKNOWN);
@@ -198,7 +198,7 @@ public class ServerTransportImpl implements
     public void handleNewStream(Void unused, NewStream payload) {
         this.transportQueue.enqueue(() -> {
             int streamId = payload.getStreamId();
-            log.info("Client[{}] new stream {}", this.session.getId(), streamId);
+            log.debug("Client[{}] new stream {}", this.session.getId(), streamId);
 
             byte[][] serializedMetadata = payload.getMetadataList()
                     .stream()
@@ -265,7 +265,7 @@ public class ServerTransportImpl implements
                 return ;
             }
             Status status = ProtocolHelper.statusFromProto(payload.getStatus());
-            log.info("Client[{}, stream={}] close by client: {}", this.session.getId(), streamId, status.getCode());
+            log.debug("Client[{}, stream={}] close by client: {}", this.session.getId(), streamId, status.getCode());
             transportQueue.enqueue(new CancelServerStreamCommand(stream, true, status), true);
         }, true);
     }
@@ -369,7 +369,7 @@ public class ServerTransportImpl implements
 
     @Override
     public void afterShutdown() {
-        log.info("afterShutdown");
+        log.trace("afterShutdown");
         this.notifyTerminateIfNoStream();
     }
 

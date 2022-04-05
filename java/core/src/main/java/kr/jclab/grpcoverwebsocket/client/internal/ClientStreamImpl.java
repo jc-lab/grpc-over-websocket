@@ -82,7 +82,7 @@ public class ClientStreamImpl extends AbstractClientStream {
     }
 
     public void handleStreamHeader(Metadata metadata) {
-        log.info("handleStreamHeader");
+        log.trace("handleStreamHeader");
         this.transportState.inboundHeadersReceived(
                 metadata
         );
@@ -95,7 +95,7 @@ public class ClientStreamImpl extends AbstractClientStream {
     }
 
     public void handleCloseStream(Status status, @Nullable Metadata trailers) {
-        log.info("handleCloseStream");
+        log.trace("handleCloseStream");
         this.transportState.inboundTrailersReceived(
                 trailers,
                 status
@@ -190,7 +190,7 @@ public class ClientStreamImpl extends AbstractClientStream {
     private final Sink sink = new Sink() {
         @Override
         public void writeHeaders(Metadata metadata, @Nullable byte[] payload) {
-            log.info("writeHeaders");
+            log.trace("writeHeaders");
             transport.startStream(ClientStreamImpl.this);
 
             List<ByteString> serializedMetadata = Arrays.stream(InternalMetadata.serialize(metadata))

@@ -97,7 +97,7 @@ public class GrpcOverWebsocketClientTransport implements
         ) {
             @Override
             public void onOpen(ServerHandshake handshakedata) {
-                log.info("[{}] onOpen", logId);
+                log.debug("[{}] onOpen", logId);
                 synchronized (lock) {
                     handshakeState = HandshakeState.HANDSHAKE;
                 }
@@ -120,7 +120,7 @@ public class GrpcOverWebsocketClientTransport implements
 
             @Override
             public void onClose(int code, String reason, boolean remote) {
-                log.info("[{}] onClose", logId);
+                log.debug("[{}] onClose", logId);
                 clientListener.onClosed(GrpcOverWebsocketClientTransport.this);
 //
 //                if (enableReconnect) {
@@ -134,7 +134,7 @@ public class GrpcOverWebsocketClientTransport implements
 
             @Override
             public void onError(Exception ex) {
-                log.info("[{}] onError", logId, ex);
+                log.debug("[{}] onError", logId, ex);
                 clientListener.onError(GrpcOverWebsocketClientTransport.this, ex);
                 shutdownNow(Status.UNAVAILABLE); // TODO: When only CONNECT FAILURE
             }
@@ -201,7 +201,7 @@ public class GrpcOverWebsocketClientTransport implements
 
             cancelPing(new IOException("shutdown"));
 
-            log.info("all streams shutdown by shutdownNow");
+            log.debug("all streams shutdown by shutdownNow");
 
             finishTransport(reason);
         }
@@ -223,7 +223,7 @@ public class GrpcOverWebsocketClientTransport implements
                 tracers, getAttributes(), headers
         );
 
-        log.info("newStream for {}", method);
+        log.debug("newStream for {}", method);
 
         synchronized (this.lock) {
             Status shutdownStatus = this.lifecycleManager.getShutdownStatus();
@@ -463,20 +463,20 @@ public class GrpcOverWebsocketClientTransport implements
 
         @Override
         public void handleFinishTransport(Void unused, FinishTransport payload) {
-            log.info("handleFinishTransport");
+            log.trace("handleFinishTransport");
             finishTransport(ProtocolHelper.statusFromProto(payload.getStatus()));
         }
     };
 
     @Override
     public void afterShutdown() {
-        log.info("afterShutdown");
+        log.trace("afterShutdown");
         this.notifyTerminateIfNoStream();
     }
 
     @Override
     public void afterTerminate() {
-        log.info("afterTerminate");
+        log.trace("afterTerminate");
         this.webSocketClient.close();
     }
 
