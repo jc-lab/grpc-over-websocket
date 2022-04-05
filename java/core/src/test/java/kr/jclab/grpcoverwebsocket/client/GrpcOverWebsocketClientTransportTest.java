@@ -78,11 +78,6 @@ public class GrpcOverWebsocketClientTransportTest extends AbstractTransportTest 
     }
 
     @Test
-    public void earlyServerClose_serverFailure_withClientCancelOnListenerClosed() throws Exception {
-        super.earlyServerClose_serverFailure_withClientCancelOnListenerClosed();
-    }
-
-    @Test
     public void socketStats() throws Exception {
         super.socketStats();
     }
@@ -90,16 +85,6 @@ public class GrpcOverWebsocketClientTransportTest extends AbstractTransportTest 
     @Test
     public void serverCancel() throws Exception {
          super.serverCancel();
-    }
-
-    @Test
-    public void openStreamPreventsTermination() throws Exception {
-        super.openStreamPreventsTermination();
-    }
-
-    @Test
-    public void shutdownNowKillsServerStream() throws Exception {
-        super.shutdownNowKillsServerStream();
     }
 
     @Test
@@ -115,11 +100,6 @@ public class GrpcOverWebsocketClientTransportTest extends AbstractTransportTest 
     @Test
     public void transportInUse_balancerRpcsNotCounted() throws Exception {
         super.transportInUse_balancerRpcsNotCounted();
-    }
-
-    @Test
-    public void transportInUse_clientCancel() throws Exception {
-        super.transportInUse_clientCancel();
     }
 
     @Test

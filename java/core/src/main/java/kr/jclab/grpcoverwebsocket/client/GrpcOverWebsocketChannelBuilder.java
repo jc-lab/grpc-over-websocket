@@ -1,14 +1,10 @@
 package kr.jclab.grpcoverwebsocket.client;
 
-import com.google.errorprone.annotations.DoNotCall;
 import io.grpc.ChannelCredentials;
 import io.grpc.ChannelLogger;
 import io.grpc.ManagedChannelBuilder;
-import io.grpc.inprocess.InProcessChannelBuilder;
-import io.grpc.inprocess.InProcessSocketAddress;
 import io.grpc.internal.*;
 import kr.jclab.grpcoverwebsocket.internal.SharedResources;
-import kr.jclab.grpcoverwebsocket.server.GrpcOverWebsocketServerBuilder;
 
 import javax.annotation.Nullable;
 import java.net.SocketAddress;

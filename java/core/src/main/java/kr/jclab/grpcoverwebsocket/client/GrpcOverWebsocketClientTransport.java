@@ -201,16 +201,19 @@ public class GrpcOverWebsocketClientTransport implements
 
             cancelPing(new IOException("shutdown"));
 
-            Iterator<Map.Entry<Integer, ClientStreamImpl>> it = this.streams.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<Integer, ClientStreamImpl> entry = it.next();
-                it.remove();
-                entry.getValue().cancel(reason);
-                // .transportState().transportReportStatus(reason, false, new Metadata());
-                this.inUseState.updateObjectInUse(entry.getValue(), false);
-            }
+            log.info("all streams shutdown by shutdownNow");
 
-            this.lifecycleManager.notifyTerminated(reason);
+            finishTransport(reason);
+        }
+    }
+
+    private void cancelStreamsLocally(Status reason) {
+        Iterator<Map.Entry<Integer, ClientStreamImpl>> it = this.streams.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, ClientStreamImpl> entry = it.next();
+            it.remove();
+            entry.getValue().closeByForcelly(reason);
+            this.inUseState.updateObjectInUse(entry.getValue(), false);
         }
     }
 
@@ -255,18 +258,18 @@ public class GrpcOverWebsocketClientTransport implements
         stream.start(streamId);
     }
 
-    public void finishStream(int streamId, Status status, @Nullable Metadata trailers) {
-        synchronized (this.lock) {
-            ClientStreamImpl stream = this.streams.remove(streamId);
-            if (stream == null) {
-                throw new RuntimeException("Invalid stream id: " + streamId);
-            }
-            this.inUseState.updateObjectInUse(stream, false);
-            if (MetadataUtils.metadataSize(trailers) > maxInboundMetadataSize) {
-                stream.cancel(Status.RESOURCE_EXHAUSTED);
-                return;
-            }
-            stream.handleCloseStream(status, trailers);
+    public void finishStream(int streamId) {
+        log.warn("Stream[{}]: finishStream", streamId);
+
+        ClientStreamImpl stream = streams.remove(streamId);
+        if (stream == null) {
+            log.warn("Invalid stream id: " + streamId);
+            throw new RuntimeException("Invalid stream id: " + streamId);
+        }
+
+        this.inUseState.updateObjectInUse(stream, false);
+
+        if (this.lifecycleManager.getShutdownStatus() != null) {
             notifyTerminateIfNoStream();
         }
     }
@@ -416,11 +419,14 @@ public class GrpcOverWebsocketClientTransport implements
         public void handleStreamHeader(Void unused, StreamHeader payload) {
             ClientStreamImpl stream = streams.get(payload.getStreamId());
             if (stream == null) {
+                log.warn("Invalid stream id: " + payload.getStreamId());
                 throw new RuntimeException("Invalid stream id: " + payload.getStreamId());
             }
             Metadata metadata = ProtocolHelper.metadataDeserialize(payload.getHeadersList());
             //TODO: more efficiently
-            if (MetadataUtils.metadataSize(metadata) > maxInboundMetadataSize) {
+            int metadataSize = MetadataUtils.metadataSize(metadata);
+            if (metadataSize > maxInboundMetadataSize) {
+                log.warn("metadataSize({}) > maxInboundMetadataSize({})", metadataSize, maxInboundMessageSize);
                 stream.cancel(Status.RESOURCE_EXHAUSTED);
                 return ;
             }
@@ -438,32 +444,54 @@ public class GrpcOverWebsocketClientTransport implements
 
         @Override
         public void handleCloseStream(Void unused, CloseStream payload) {
-            finishStream(
-                    payload.getStreamId(),
-                    ProtocolHelper.statusFromProto(payload.getStatus()),
-                    ProtocolHelper.metadataDeserialize(payload.getTrailersList())
-            );
+            ClientStreamImpl stream = streams.get(payload.getStreamId());
+            if (stream == null) {
+                throw new RuntimeException("Invalid stream id: " + payload.getStreamId());
+            }
+
+            Status status = ProtocolHelper.statusFromProto(payload.getStatus());
+            Metadata trailers = ProtocolHelper.metadataDeserialize(payload.getTrailersList());
+
+            if (MetadataUtils.metadataSize(trailers) > maxInboundMetadataSize) {
+                stream.cancel(Status.RESOURCE_EXHAUSTED);
+            } else {
+                stream.handleCloseStream(status, trailers);
+            }
+
+            finishStream(stream.getStreamId());
         }
 
         @Override
         public void handleFinishTransport(Void unused, FinishTransport payload) {
-            shutdownNow(ProtocolHelper.statusFromProto(payload.getStatus()));
+            log.info("handleFinishTransport");
+            finishTransport(ProtocolHelper.statusFromProto(payload.getStatus()));
         }
     };
 
     @Override
     public void afterShutdown() {
+        log.info("afterShutdown");
         this.notifyTerminateIfNoStream();
     }
 
     @Override
     public void afterTerminate() {
+        log.info("afterTerminate");
         this.webSocketClient.close();
     }
 
     private void notifyTerminateIfNoStream() {
         if (this.streams.isEmpty() && this.lifecycleManager.getShutdownStatus() != null) {
-            lifecycleManager.notifyTerminated(Status.OK);
+            this.finishTransport(Status.OK);
         }
+    }
+
+    private void finishTransport(Status status) {
+        try {
+            cancelStreamsLocally(status);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        this.lifecycleManager.notifyTerminated(status);
     }
 }

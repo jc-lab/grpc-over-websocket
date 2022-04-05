@@ -55,7 +55,7 @@ public class ClientStreamImpl extends AbstractClientStream {
     }
 
     @Override
-    protected TransportState transportState() {
+    public TransportState transportState() {
         return this.transportState;
     }
 
@@ -82,6 +82,7 @@ public class ClientStreamImpl extends AbstractClientStream {
     }
 
     public void handleStreamHeader(Metadata metadata) {
+        log.info("handleStreamHeader");
         this.transportState.inboundHeadersReceived(
                 metadata
         );
@@ -94,10 +95,15 @@ public class ClientStreamImpl extends AbstractClientStream {
     }
 
     public void handleCloseStream(Status status, @Nullable Metadata trailers) {
+        log.info("handleCloseStream");
         this.transportState.inboundTrailersReceived(
                 trailers,
                 status
         );
+    }
+
+    public void closeByForcelly(Status reason) {
+        this.transportState.transportReportStatus(reason, true, new Metadata());
     }
 
     private class TransportStateImpl extends TransportState {
@@ -175,6 +181,8 @@ public class ClientStreamImpl extends AbstractClientStream {
                     trailers = new Metadata();
                 }
                 transportReportStatus(reason, stopDelivery, trailers);
+
+                transport.finishStream(streamId);
             }
         }
     }

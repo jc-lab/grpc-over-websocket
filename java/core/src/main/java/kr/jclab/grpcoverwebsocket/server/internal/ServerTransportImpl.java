@@ -6,6 +6,7 @@ import com.google.protobuf.GeneratedMessageV3;
 import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.*;
 import io.grpc.internal.*;
+import kr.jclab.grpcoverwebsocket.client.internal.ClientStreamImpl;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.*;
 import kr.jclab.grpcoverwebsocket.internal.*;
 import kr.jclab.grpcoverwebsocket.protocol.v1.*;
@@ -53,7 +54,7 @@ public class ServerTransportImpl implements
     private Attributes attributes = null;
 
     private final Object lock = new Object();
-    private final ConcurrentHashMap<Integer, ServerStreamImpl> virtualStreams = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, ServerStreamImpl> streams = new ConcurrentHashMap<>();
 
     @Getter
     private final OrderedQueue transportQueue;
@@ -100,6 +101,7 @@ public class ServerTransportImpl implements
     public void onClosedByRemote() {
         log.info("onClosedByRemote");
         synchronized (this.lock) {
+            cancelStreamsLocally(Status.UNKNOWN);
             this.lifecycleManager.notifyTerminated(Status.UNKNOWN);
         }
     }
@@ -194,43 +196,45 @@ public class ServerTransportImpl implements
 
     @Override
     public void handleNewStream(Void unused, NewStream payload) {
-        int streamId = payload.getStreamId();
-        log.info("Client[{}] new stream {}", this.session.getId(), streamId);
+        this.transportQueue.enqueue(() -> {
+            int streamId = payload.getStreamId();
+            log.info("Client[{}] new stream {}", this.session.getId(), streamId);
 
-        byte[][] serializedMetadata = payload.getMetadataList()
-                .stream()
-                .map(ByteString::toByteArray)
-                .toArray(byte[][]::new);
-        int metadataSize = MetadataUtils.metadataSize(serializedMetadata);
+            byte[][] serializedMetadata = payload.getMetadataList()
+                    .stream()
+                    .map(ByteString::toByteArray)
+                    .toArray(byte[][]::new);
+            int metadataSize = MetadataUtils.metadataSize(serializedMetadata);
 
-        if (metadataSize > this.maxInboundMetadataSize) {
-            CloseStream closeStream = CloseStream.newBuilder()
-                    .setStreamId(streamId)
-                    .setStatus(ProtocolHelper.statusToProto(Status.fromCode(Status.Code.RESOURCE_EXHAUSTED)))
-                    .build();
-            sendControlMessage(ControlType.CloseStream, closeStream);
-            return ;
-        }
+            if (metadataSize > this.maxInboundMetadataSize) {
+                CloseStream closeStream = CloseStream.newBuilder()
+                        .setStreamId(streamId)
+                        .setStatus(ProtocolHelper.statusToProto(Status.fromCode(Status.Code.RESOURCE_EXHAUSTED)))
+                        .build();
+                sendControlMessage(ControlType.CloseStream, closeStream);
+                return ;
+            }
 
-        Metadata metadata = InternalMetadata.newMetadata(serializedMetadata);
+            Metadata metadata = InternalMetadata.newMetadata(serializedMetadata);
 
-        StatsTraceContext statsTraceContext = StatsTraceContext.newServerContext(
-                streamTracerFactories,
-                payload.getMethodName(),
-                metadata
-        );
-        ServerStreamImpl stream = new ServerStreamImpl(
-                writableBufferAllocator,
-                authority,
-                attributes,
-                statsTraceContext,
-                this.transportTracer,
-                this,
-                streamId
-        );
-        this.virtualStreams.put(streamId, stream);
-        this.serverTransportListener.streamCreated(stream, payload.getMethodName(), metadata);
-        stream.start();
+            StatsTraceContext statsTraceContext = StatsTraceContext.newServerContext(
+                    streamTracerFactories,
+                    payload.getMethodName(),
+                    metadata
+            );
+            ServerStreamImpl stream = new ServerStreamImpl(
+                    writableBufferAllocator,
+                    authority,
+                    attributes,
+                    statsTraceContext,
+                    this.transportTracer,
+                    this,
+                    streamId
+            );
+            this.streams.put(streamId, stream);
+            this.serverTransportListener.streamCreated(stream, payload.getMethodName(), metadata);
+            stream.start();
+        }, true);
     }
 
     @Override
@@ -240,26 +244,30 @@ public class ServerTransportImpl implements
 
     @Override
     public void handleGrpcStream(Void unused, int streamId, EnumSet<GrpcStreamFlag> flags, ByteBuffer data) {
-        ServerStreamImpl stream = this.virtualStreams.get(streamId);
-        if (stream == null) {
-            log.error("handleGrpcStream: Invalid stream id: " + streamId);
-            return ;
-        }
-        log.debug("Client[{}, stream={}] handleGrpcStream: {} bytes (flags: {})", this.session.getId(), streamId, data.remaining(), flags);
-        stream.handlePayload(flags, data);
+        this.transportQueue.enqueue(() -> {
+            ServerStreamImpl stream = this.streams.get(streamId);
+            if (stream == null) {
+                log.error("handleGrpcStream: Invalid stream id: " + streamId);
+                return ;
+            }
+            log.debug("Client[{}, stream={}] handleGrpcStream: {} bytes (flags: {})", this.session.getId(), streamId, data.remaining(), flags);
+            stream.handlePayload(flags, data);
+        }, true);
     }
 
     @Override
     public void handleCloseStream(Void unused, CloseStream payload) {
-        int streamId = payload.getStreamId();
-        ServerStreamImpl stream = this.virtualStreams.remove(streamId);
-        if (stream == null) {
-            log.error("handleCloseStream: Invalid stream id: " + streamId);
-            return ;
-        }
-        Status status = ProtocolHelper.statusFromProto(payload.getStatus());
-        log.info("Client[{}, stream={}] close by client: {}", this.session.getId(), streamId, status.getCode());
-        transportQueue.enqueue(new CancelServerStreamCommand(stream, true, status), true);
+        this.transportQueue.enqueue(() -> {
+            int streamId = payload.getStreamId();
+            ServerStreamImpl stream = this.streams.remove(streamId);
+            if (stream == null) {
+                log.error("handleCloseStream: Invalid stream id: " + streamId);
+                return ;
+            }
+            Status status = ProtocolHelper.statusFromProto(payload.getStatus());
+            log.info("Client[{}, stream={}] close by client: {}", this.session.getId(), streamId, status.getCode());
+            transportQueue.enqueue(new CancelServerStreamCommand(stream, true, status), true);
+        }, true);
     }
 
     @Override
@@ -289,16 +297,18 @@ public class ServerTransportImpl implements
                 return ;
             }
 
-            // TODO: Its needed?
-            Iterator<Map.Entry<Integer, ServerStreamImpl>> it = this.virtualStreams.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<Integer, ServerStreamImpl> entry = it.next();
-                it.remove();
-                entry.getValue().cancelStream(reason, true);
-            }
+            cancelStreamsLocally(reason);
 
-            this.session.close();
-            this.lifecycleManager.notifyTerminated(reason);
+            this.finishTransport(reason);
+        }
+    }
+
+    private void cancelStreamsLocally(Status reason) {
+        Iterator<Map.Entry<Integer, ServerStreamImpl>> it = this.streams.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Integer, ServerStreamImpl> entry = it.next();
+            it.remove();
+            entry.getValue().cancelStream(reason, true);
         }
     }
 
@@ -359,17 +369,29 @@ public class ServerTransportImpl implements
 
     @Override
     public void afterShutdown() {
-        if (!this.lifecycleManager.transportTerminated()) {
-            FinishTransport finishTransport = FinishTransport.newBuilder()
-                    .setStatus(ProtocolHelper.statusToProto(this.lifecycleManager.getShutdownStatus()))
-                    .build();
-            sendControlMessage(ControlType.FinishTransport, finishTransport);
-        }
-
-        this.lifecycleManager.notifyTerminated(this.lifecycleManager.getShutdownStatus());
+        log.info("afterShutdown");
+        this.notifyTerminateIfNoStream();
     }
 
     @Override
     public void afterTerminate() {
+        this.session.close();
+    }
+
+    private void notifyTerminateIfNoStream() {
+        if (this.streams.isEmpty() && this.lifecycleManager.getShutdownStatus() != null) {
+            this.finishTransport(Status.OK);
+        }
+    }
+
+    private void finishTransport(Status status) {
+        if (!this.lifecycleManager.transportTerminated()) {
+            FinishTransport finishTransport = FinishTransport.newBuilder()
+                    .setStatus(ProtocolHelper.statusToProto(status))
+                    .build();
+            sendControlMessage(ControlType.FinishTransport, finishTransport);
+        }
+
+        this.lifecycleManager.notifyTerminated(status);
     }
 }

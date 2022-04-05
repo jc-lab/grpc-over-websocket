@@ -97,14 +97,13 @@ public class ServerStreamImpl extends AbstractServerStream {
         this.cancelSent = true;
 
         transportState.transportReportStatus(reason);
+
         if (!remote) {
             CloseStream streamTrailers = CloseStream.newBuilder()
                     .setStreamId(streamId)
                     .setStatus(ProtocolHelper.statusToProto(reason))
                     .build();
-            transport.getTransportQueue().enqueue(() -> {
-                transport.sendControlMessage(ControlType.CloseStream, streamTrailers);
-            }, true);
+            transport.sendControlMessage(ControlType.CloseStream, streamTrailers);
         }
     }
 
@@ -138,6 +137,7 @@ public class ServerStreamImpl extends AbstractServerStream {
     private final Sink sink = new Sink() {
         @Override
         public void writeHeaders(Metadata headers) {
+            log.info("writeHeaders");
             StreamHeader streamHeader = StreamHeader.newBuilder()
                     .setStreamId(streamId)
                     .addAllHeaders(ProtocolHelper.metadataSerialize(headers))
