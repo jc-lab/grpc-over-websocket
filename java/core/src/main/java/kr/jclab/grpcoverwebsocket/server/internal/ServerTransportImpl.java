@@ -103,8 +103,10 @@ public class ServerTransportImpl implements
     public void onClosedByRemote() {
         log.trace("onClosedByRemote");
         synchronized (this.lock) {
-            cancelStreamsLocally(Status.UNKNOWN);
-            this.lifecycleManager.notifyTerminated(Status.UNKNOWN);
+            if (this.lifecycleManager != null) {
+                cancelStreamsLocally(Status.UNKNOWN);
+                this.lifecycleManager.notifyTerminated(Status.UNKNOWN);
+            }
         }
     }
 
@@ -196,6 +198,19 @@ public class ServerTransportImpl implements
     public void handleNewStream(Void unused, NewStream payload) {
         this.transportQueue.enqueue(() -> {
             int streamId = payload.getStreamId();
+
+            if (this.lifecycleManager.getShutdownStatus() != null) {
+                log.debug("Client[{}] new stream {} block by shutdown", this.session.getId(), streamId);
+
+                CloseStream closeStream = CloseStream.newBuilder()
+                        .setStreamId(streamId)
+                        .setStatus(ProtocolHelper.statusToProto(Status.fromCode(Status.Code.ABORTED)))
+                        .build();
+                sendControlMessage(ControlType.CloseStream, closeStream);
+
+                return ;
+            }
+
             log.debug("Client[{}] new stream {}", this.session.getId(), streamId);
 
             byte[][] serializedMetadata = payload.getMetadataList()

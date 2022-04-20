@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.SubProtocolCapable;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 
@@ -19,10 +20,12 @@ import javax.annotation.PreDestroy;
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.List;
 
 @Component
 @Slf4j
-public class GrpcServerService extends BinaryWebSocketHandler {
+public class GrpcServerService extends BinaryWebSocketHandler implements SubProtocolCapable {
     private final GrpcOverWebsocketTransceiver transceiver = new GrpcOverWebsocketTransceiver();
 
     private Server server;
@@ -124,6 +127,11 @@ public class GrpcServerService extends BinaryWebSocketHandler {
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) throws Exception {
         log.info("WS[{}] handleBinaryMessage {} bytes", session, message.getPayloadLength());
         this.transceiver.handleMessage(new WrappedWebSocketSession(session), message.getPayload());
+    }
+
+    @Override
+    public List<String> getSubProtocols() {
+        return Collections.singletonList("v1.grpcoverws.jclab.kr");
     }
 
     public static class WrappedWebSocketSession implements GrpcWebSocketSession {

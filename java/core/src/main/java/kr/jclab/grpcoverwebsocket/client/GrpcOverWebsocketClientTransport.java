@@ -148,8 +148,10 @@ public class GrpcOverWebsocketClientTransport implements
             public void onWebsocketPong(WebSocket conn, Framedata f) {
                 super.onWebsocketPong(conn, f);
                 synchronized (lock) {
-                    ping.complete();
-                    ping = null;
+                    if (ping != null) {
+                        ping.complete();
+                        ping = null;
+                    }
                 }
             }
         };
@@ -353,7 +355,7 @@ public class GrpcOverWebsocketClientTransport implements
             return ;
         }
 
-        int size = 18;
+        int size = 6;
         byte flags = 0;
         ByteBuffer readableBuffer = null;
         if (frame != null) {
