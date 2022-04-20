@@ -154,6 +154,8 @@ public class GrpcOverWebsocketClientTransport implements
             }
         };
 
+        clientListener.onWebsocketCreated(this, this.webSocketClient);
+
         this.transportQueue = new OrderedQueue(
                 transportExecutorService,
                 (cmd) -> {
