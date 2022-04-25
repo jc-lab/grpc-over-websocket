@@ -122,6 +122,7 @@ public class GrpcOverWebsocketClientTransport implements
             public void onClose(int code, String reason, boolean remote) {
                 log.debug("[{}] onClose", logId);
                 clientListener.onClosed(GrpcOverWebsocketClientTransport.this);
+                shutdownNow(Status.UNAVAILABLE);
 //
 //                if (enableReconnect) {
 //                    scheduledExecutorService.schedule(() -> {
