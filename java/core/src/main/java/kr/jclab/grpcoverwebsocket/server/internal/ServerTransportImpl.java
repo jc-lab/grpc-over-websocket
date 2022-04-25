@@ -7,7 +7,6 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import io.grpc.*;
 import io.grpc.internal.*;
 import kr.jclab.grpcoverwebsocket.GrpcOverWebSocket;
-import kr.jclab.grpcoverwebsocket.client.internal.ClientStreamImpl;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.*;
 import kr.jclab.grpcoverwebsocket.internal.*;
 import kr.jclab.grpcoverwebsocket.protocol.v1.*;
