@@ -168,8 +168,10 @@ public class GrpcOverWebsocketClientTransport implements
                 }
         );
 
+        boolean isWss = this.webSocketClient.getURI().getScheme().startsWith("wss");
         this.attributes = Attributes.newBuilder()
                 .set(GrpcAttributes.ATTR_CLIENT_EAG_ATTRS, options.getEagAttributes())
+                .set(GrpcAttributes.ATTR_SECURITY_LEVEL, isWss ? SecurityLevel.NONE : SecurityLevel.PRIVACY_AND_INTEGRITY) //TODO: Not sure about the right place.
                 .build();
     }
 
