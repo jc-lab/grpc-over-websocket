@@ -9,6 +9,7 @@ import io.grpc.Status;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.*;
 import kr.jclab.grpcoverwebsocket.internal.HandshakeState;
 
+import java.nio.Buffer;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -113,7 +114,7 @@ public class ProtocolHelper {
                 .order(ByteOrder.LITTLE_ENDIAN)
                 .put(PayloadType.HANDSHAKE.getValue())
                 .put(buffer);
-        sendBuffer.flip();
+        ((Buffer)sendBuffer).flip();
         return sendBuffer;
     }
 
@@ -124,7 +125,7 @@ public class ProtocolHelper {
                 .put(PayloadType.CONTROL.getValue())
                 .put(controlType.getValue())
                 .put(data);
-        sendBuffer.flip();
+        ((Buffer)sendBuffer).flip();
         return sendBuffer;
     }
 

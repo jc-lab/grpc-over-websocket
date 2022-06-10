@@ -22,6 +22,7 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.*;
@@ -364,7 +365,7 @@ public class GrpcOverWebsocketClientTransport implements
         if (frame != null) {
             size += frame.readableBytes();
             readableBuffer = ((ByteBufferWritableBuffer) frame).buffer();
-            readableBuffer.flip();
+            ((Buffer)readableBuffer).flip();
         }
         if (endOfStream) {
             flags |= GrpcStreamFlag.EndOfFrame.getValue();
@@ -377,7 +378,7 @@ public class GrpcOverWebsocketClientTransport implements
         if (readableBuffer != null) {
             sendBuffer.put(readableBuffer);
         }
-        sendBuffer.flip();
+        ((Buffer)sendBuffer).flip();
         this.webSocketClient.send(sendBuffer);
     }
 

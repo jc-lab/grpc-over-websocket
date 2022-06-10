@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.*;
@@ -356,7 +357,7 @@ public class ServerTransportImpl implements
         if (frame != null) {
             size += frame.readableBytes();
             readableBuffer = ((ByteBufferWritableBuffer) frame).buffer();
-            readableBuffer.flip();
+            ((Buffer)readableBuffer).flip();
         }
 //        if (endOfStream) {
 //            flags |= GrpcStreamFlag.EndOfFrame.getValue();
@@ -371,7 +372,7 @@ public class ServerTransportImpl implements
         if (readableBuffer != null) {
             sendBuffer.put(readableBuffer);
         }
-        sendBuffer.flip();
+        ((Buffer)sendBuffer).flip();
         try {
             this.session.sendMessage(sendBuffer);
         } catch (IOException e) {
