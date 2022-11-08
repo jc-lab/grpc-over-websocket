@@ -14,9 +14,7 @@ public class SharedResources {
                 public ExecutorService create() {
                     // We don't use newSingleThreadScheduledExecutor because it doesn't return a
                     // ScheduledThreadPoolExecutor.
-                    ExecutorService service = new ThreadPoolExecutor(0, 4,
-                            60L, TimeUnit.SECONDS,
-                            new SynchronousQueue<Runnable>(),
+                    ExecutorService service = Executors.newCachedThreadPool(
                             GrpcUtil.getThreadFactory("gows-transport-%d", true)
                     );
 
