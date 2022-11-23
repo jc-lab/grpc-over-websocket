@@ -23,7 +23,7 @@ public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplB
 
     private ScheduledExecutorService scheduledExecutorService;
     private ExecutorService transportExecutorService;
-    private ClientListener clientListener = new ClientListener() {};
+    private WebsocketClientListener<GrpcOverWebsocketClientTransport> clientListener = new WebsocketClientListener<GrpcOverWebsocketClientTransport>() {};
 
     GrpcOverWebsocketChannelBuilder(URI endpointUri) {
         this.endpointUri = endpointUri;
@@ -73,7 +73,7 @@ public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplB
         this.transportExecutorService = transportExecutorService;
     }
 
-    public void setClientListener(ClientListener clientListener) {
+    public void setClientListener(WebsocketClientListener<GrpcOverWebsocketClientTransport> clientListener) {
         this.clientListener = clientListener;
     }
 

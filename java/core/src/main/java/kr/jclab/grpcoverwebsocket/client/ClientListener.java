@@ -1,29 +1,26 @@
 package kr.jclab.grpcoverwebsocket.client;
 
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.HandshakeResult;
-import org.java_websocket.client.WebSocketClient;
 
 import java.nio.ByteBuffer;
 
-public interface ClientListener {
-    default void onWebsocketCreated(GrpcOverWebsocketClientConnection connection, WebSocketClient webSocketClient) {}
+public interface ClientListener<C extends GrpcOverWebsocketClientConnection> {
+    default void onConnected(C connection) {}
 
-    default void onConnected(GrpcOverWebsocketClientConnection connection) {}
+    default void onClosed(C connection) {}
 
-    default void onClosed(GrpcOverWebsocketClientConnection connection) {}
-
-    default void onError(GrpcOverWebsocketClientConnection connection, Exception ex) {}
+    default void onError(C connection, Exception ex) {}
 
     /**
      * beforeReconnect
      *
      * @return Returning false cancels the reconnection.
      */
-    default boolean beforeReconnect(GrpcOverWebsocketClientConnection connection) {
+    default boolean beforeReconnect(C connection) {
         return true;
     }
 
-    default void onHandshakeMessage(GrpcOverWebsocketClientConnection connection, ByteBuffer buffer) {}
+    default void onHandshakeMessage(C connection, ByteBuffer buffer) {}
 
-    default void onHandshakeResult(GrpcOverWebsocketClientConnection connection, HandshakeResult handshakeResult) {}
+    default void onHandshakeResult(C connection, HandshakeResult handshakeResult) {}
 }
