@@ -15,7 +15,7 @@ import java.util.concurrent.ExecutorService;
 
 @Slf4j
 public class GrpcOverWebsocketClientTransport
-        extends AbstractCgrpcCClientTransport<GrpcOverWebsocketClientTransport>
+        extends AbstractCgrpcClientTransport<GrpcOverWebsocketClientTransport>
         implements WritableSocket
 {
     private final URI endpointUri;
