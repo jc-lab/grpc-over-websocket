@@ -33,7 +33,7 @@ import java.util.concurrent.ExecutorService;
  * Abstract Customizable GRPC Client Transport
  */
 @Slf4j
-public class AbstractCgrpcCClientTransport<C extends AbstractCgrpcCClientTransport<C>> implements
+public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport<C>> implements
         ConnectionClientTransport,
         GrpcOverWebsocketClientConnection,
         ClientTransportLifecycleManager.LifecycleManagerListener,
@@ -81,7 +81,7 @@ public class AbstractCgrpcCClientTransport<C extends AbstractCgrpcCClientTranspo
 
     private final ConcurrentHashMap<Integer, ClientStreamImpl> streams = new ConcurrentHashMap<>();
 
-    public AbstractCgrpcCClientTransport(
+    public AbstractCgrpcClientTransport(
             ExecutorService transportExecutorService,
             int maxInboundMetadataSize,
             int maxInboundMessageSize,
@@ -344,7 +344,7 @@ public class AbstractCgrpcCClientTransport<C extends AbstractCgrpcCClientTranspo
 
         @Override
         public void handleHandshakeMessage(Void unused, ByteBuffer payload) {
-            clientListener.onHandshakeMessage((C) AbstractCgrpcCClientTransport.this, payload);
+            clientListener.onHandshakeMessage((C) AbstractCgrpcClientTransport.this, payload);
         }
 
         @Override
@@ -354,7 +354,7 @@ public class AbstractCgrpcCClientTransport<C extends AbstractCgrpcCClientTranspo
             } else {
                 handshakeState = HandshakeState.FAILURE;
             }
-            clientListener.onHandshakeResult((C) AbstractCgrpcCClientTransport.this, payload);
+            clientListener.onHandshakeResult((C) AbstractCgrpcClientTransport.this, payload);
             if (payload.getResolved()) {
                 transportListener.transportReady();
             } else {
@@ -453,7 +453,7 @@ public class AbstractCgrpcCClientTransport<C extends AbstractCgrpcCClientTranspo
         synchronized (lock) {
             handshakeState = HandshakeState.HANDSHAKE;
         }
-        clientListener.onConnected((C) AbstractCgrpcCClientTransport.this);
+        clientListener.onConnected((C) AbstractCgrpcClientTransport.this);
     }
 
     @Override
@@ -461,21 +461,21 @@ public class AbstractCgrpcCClientTransport<C extends AbstractCgrpcCClientTranspo
         try {
             ProtocolHelper.handleMessage(protocolHandler, null, receiveBuffer);
         } catch (Exception e) {
-            clientListener.onError((C) AbstractCgrpcCClientTransport.this, e);
+            clientListener.onError((C) AbstractCgrpcClientTransport.this, e);
         }
     }
 
     @Override
     public void onClose() {
         log.debug("[{}] onClose", logId);
-        clientListener.onClosed((C) AbstractCgrpcCClientTransport.this);
+        clientListener.onClosed((C) AbstractCgrpcClientTransport.this);
         shutdownNow(Status.UNAVAILABLE);
     }
 
     @Override
     public void onError(Exception ex) {
         log.debug("[{}] onError", logId, ex);
-        clientListener.onError((C) AbstractCgrpcCClientTransport.this, ex);
+        clientListener.onError((C) AbstractCgrpcClientTransport.this, ex);
         shutdownNow(Status.UNAVAILABLE); // TODO: When only CONNECT FAILURE
     }
 

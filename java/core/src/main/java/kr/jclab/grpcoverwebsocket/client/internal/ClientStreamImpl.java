@@ -3,7 +3,7 @@ package kr.jclab.grpcoverwebsocket.client.internal;
 import com.google.protobuf.ByteString;
 import io.grpc.*;
 import io.grpc.internal.*;
-import kr.jclab.grpcoverwebsocket.client.AbstractCgrpcCClientTransport;
+import kr.jclab.grpcoverwebsocket.client.AbstractCgrpcClientTransport;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.CloseStream;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.NewStream;
 import kr.jclab.grpcoverwebsocket.internal.ByteBufferReadableBuffer;
@@ -29,12 +29,12 @@ public class ClientStreamImpl extends AbstractClientStream {
     private int streamId = -1;
 
     private final MethodDescriptor<?, ?> method;
-    private final AbstractCgrpcCClientTransport transport;
+    private final AbstractCgrpcClientTransport transport;
     private final TransportStateImpl transportState;
     private final StatsTraceContext statsTraceCtx;
 
     public ClientStreamImpl(
-            AbstractCgrpcCClientTransport transport,
+            AbstractCgrpcClientTransport transport,
             WritableBufferAllocator bufferAllocator,
             StatsTraceContext statsTraceCtx,
             TransportTracer transportTracer,
