@@ -1,5 +1,6 @@
 package kr.jclab.grpcoverwebsocket.client;
 
+import com.google.common.base.Preconditions;
 import io.grpc.ChannelCredentials;
 import io.grpc.ChannelLogger;
 import io.grpc.ManagedChannelBuilder;
@@ -12,6 +13,10 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import static io.grpc.internal.GrpcUtil.DEFAULT_KEEPALIVE_TIMEOUT_NANOS;
+import static io.grpc.internal.GrpcUtil.KEEPALIVE_TIME_NANOS_DISABLED;
 
 public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplBuilder<GrpcOverWebsocketChannelBuilder> {
     private final URI endpointUri;
@@ -20,6 +25,10 @@ public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplB
 
     private int maxInboundMetadataSize = GrpcUtil.DEFAULT_MAX_HEADER_LIST_SIZE;
     private int maxInboundMessageSize = GrpcUtil.DEFAULT_MAX_MESSAGE_SIZE;
+
+    private long keepAliveTimeNanos = KEEPALIVE_TIME_NANOS_DISABLED;
+    private long keepAliveTimeoutNanos = DEFAULT_KEEPALIVE_TIMEOUT_NANOS;
+    private boolean keepAliveWithoutCalls = false;
 
     private ScheduledExecutorService scheduledExecutorService;
     private ExecutorService transportExecutorService;
@@ -33,6 +42,28 @@ public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplB
                 new GrpcOverWebsocketTransportFactoryBuilder(),
                 null
         );
+    }
+
+    @Override
+    public GrpcOverWebsocketChannelBuilder keepAliveTime(long keepAliveTime, TimeUnit timeUnit) {
+        Preconditions.checkArgument(keepAliveTime > 0L, "keepalive time must be positive");
+        keepAliveTimeNanos = timeUnit.toNanos(keepAliveTime);
+        keepAliveTimeNanos = KeepAliveManager.clampKeepAliveTimeInNanos(keepAliveTimeNanos);
+        return this;
+    }
+
+    @Override
+    public GrpcOverWebsocketChannelBuilder keepAliveTimeout(long keepAliveTimeout, TimeUnit timeUnit) {
+        Preconditions.checkArgument(keepAliveTimeout > 0L, "keepalive timeout must be positive");
+        keepAliveTimeoutNanos = timeUnit.toNanos(keepAliveTimeout);
+        keepAliveTimeoutNanos = KeepAliveManager.clampKeepAliveTimeoutInNanos(keepAliveTimeoutNanos);
+        return this;
+    }
+
+    @Override
+    public GrpcOverWebsocketChannelBuilder keepAliveWithoutCalls(boolean enable) {
+        keepAliveWithoutCalls = enable;
+        return this;
     }
 
     @Override
@@ -85,7 +116,11 @@ public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplB
     ClientTransportFactory buildTransportFactory() {
         return new GrpcOverWebsocketClientTransportFactory(
                 scheduledExecutorService,
-                transportExecutorService
+                transportExecutorService,
+                keepAliveTimeNanos != KEEPALIVE_TIME_NANOS_DISABLED,
+                keepAliveTimeNanos,
+                keepAliveTimeoutNanos,
+                keepAliveWithoutCalls
         );
     }
 
@@ -106,10 +141,24 @@ public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplB
         private final boolean useSharedTransportExecutorService;
         private boolean closed;
 
+        private final boolean enableKeepAlive;
+        private final long keepAliveTimeNanos;
+        private final long keepAliveTimeoutNanos;
+        private final boolean keepAliveWithoutCalls;
+
         private GrpcOverWebsocketClientTransportFactory(
                 @Nullable ScheduledExecutorService scheduledExecutorService,
-                @Nullable ExecutorService transportExecutorService
+                @Nullable ExecutorService transportExecutorService,
+                boolean enableKeepAlive,
+                long keepAliveTimeNanos,
+                long keepAliveTimeoutNanos,
+                boolean keepAliveWithoutCalls
         ) {
+            this.enableKeepAlive = enableKeepAlive;
+            this.keepAliveTimeNanos = keepAliveTimeNanos;
+            this.keepAliveTimeoutNanos = keepAliveTimeoutNanos;
+            this.keepAliveWithoutCalls = keepAliveWithoutCalls;
+
             this.useSharedTimer = scheduledExecutorService == null;
             this.timerService = useSharedTimer
                     ? SharedResourceHolder.get(GrpcUtil.TIMER_SERVICE) : scheduledExecutorService;
@@ -129,8 +178,9 @@ public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplB
                 throw new IllegalStateException("The transport factory is closed.");
             }
 
-            return new GrpcOverWebsocketClientTransport(
+            GrpcOverWebsocketClientTransport transport = new GrpcOverWebsocketClientTransport(
                     this.transportExecutorService,
+                    this.timerService,
                     maxInboundMetadataSize,
                     maxInboundMessageSize,
                     options,
@@ -138,6 +188,10 @@ public class GrpcOverWebsocketChannelBuilder extends AbstractManagedChannelImplB
                     authority,
                     clientListener
             );
+            if (enableKeepAlive) {
+                transport.enableKeepAlive(true, keepAliveTimeNanos, keepAliveTimeoutNanos, keepAliveWithoutCalls);
+            }
+            return transport;
         }
 
         @Override
