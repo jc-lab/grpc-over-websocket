@@ -1,8 +1,11 @@
 package kr.jclab.grpcoverwebsocket.client.internal;
 
+import com.google.common.base.Preconditions;
 import com.google.common.base.Stopwatch;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.protobuf.ByteString;
 import com.google.protobuf.GeneratedMessageV3;
+import com.google.rpc.Code;
 import io.grpc.*;
 import io.grpc.internal.*;
 import kr.jclab.grpcoverwebsocket.client.ClientListener;
@@ -19,16 +22,13 @@ import lombok.extern.slf4j.Slf4j;
 
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
-import java.io.IOException;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.EnumSet;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * Abstract Customizable GRPC Client Transport
@@ -37,16 +37,23 @@ import java.util.concurrent.ExecutorService;
 public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport<C>> implements
         ConnectionClientTransport,
         GrpcOverWebsocketClientConnection,
-        ClientTransportLifecycleManager.LifecycleManagerListener,
         ClientSocket
 {
+    private final ScheduledExecutorService scheduledExecutorService;
+
     private final int maxInboundMetadataSize;
     private final int maxInboundMessageSize;
+
+    private boolean enableKeepAlive = false;
+    private long keepAliveTimeNanos = -1;
+    private long keepAliveTimeoutNanos = -1;
+    private boolean keepAliveWithoutCalls = false;
+
+    private KeepAliveManager keepAliveManager = null;
+
     @Getter
     private final ClientTransportFactory.ClientTransportOptions options;
 
-    @GuardedBy("lock") private ClientTransportLifecycleManager lifecycleManager;
-    @Getter
     private final OrderedQueue transportQueue;
 
     private final ClientListener<C> clientListener;
@@ -58,7 +65,11 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
 
     private final Object lock = new Object();
     @GuardedBy("lock") private HandshakeState handshakeState = HandshakeState.HANDSHAKE;
+    @GuardedBy("lock") private Status goAwayStatus = null;
+    @GuardedBy("lock") private boolean goAwaySent = false;
     @GuardedBy("lock") private Ping ping = null;
+    @GuardedBy("lock") private boolean stopped = false;
+    @GuardedBy("lock") private boolean hasStream = false;
 
 
     // require set
@@ -69,21 +80,22 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
             new InUseStateAggregator<ClientStreamImpl>() {
                 @Override
                 protected void handleInUse() {
-                    lifecycleManager.notifyInUse(true);
+                    listener.transportInUse(true);
                 }
 
                 @Override
                 protected void handleNotInUse() {
-                    lifecycleManager.notifyInUse(false);
+                    listener.transportInUse(false);
                 }
             };
 
-    private Listener transportListener = null;
+    private Listener listener = null;
 
-    private final ConcurrentHashMap<Integer, ClientStreamImpl> streams = new ConcurrentHashMap<>();
+    @GuardedBy("lock") private final HashMap<Integer, ClientStreamImpl> streams = new HashMap<>();
 
     public AbstractCgrpcClientTransport(
             ExecutorService transportExecutorService,
+            ScheduledExecutorService scheduledExecutorService,
             int maxInboundMetadataSize,
             int maxInboundMessageSize,
             ClientTransportFactory.ClientTransportOptions options,
@@ -91,6 +103,7 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
             String authority,
             ClientListener<C> clientListener
     ) {
+        this.scheduledExecutorService = scheduledExecutorService;
         this.maxInboundMetadataSize = maxInboundMetadataSize;
         this.maxInboundMessageSize = maxInboundMessageSize;
         this.options = options;
@@ -100,11 +113,7 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
 
         this.transportQueue = new OrderedQueue(
                 transportExecutorService,
-                (cmd) -> {
-                    if (cmd instanceof GracefulCloseCommand) {
-                        gracefulClose((GracefulCloseCommand) cmd);
-                    }
-                }
+                (cmd) -> {}
         );
 
         this.attributes = Attributes.newBuilder()
@@ -113,10 +122,23 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
                 .build();
     }
 
+    public void enableKeepAlive(
+            boolean enable,
+            long keepAliveTimeNanos,
+            long keepAliveTimeoutNanos,
+            boolean keepAliveWithoutCalls
+    ) {
+        this.enableKeepAlive = enable;
+        this.keepAliveTimeNanos = keepAliveTimeNanos;
+        this.keepAliveTimeoutNanos = keepAliveTimeoutNanos;
+        this.keepAliveWithoutCalls = keepAliveWithoutCalls;
+    }
+
     //region WebSocket
+
     @Override
     public void goAway() {
-        this.shutdown(Status.OK);
+        startGoAway(0, Status.Code.OK, Status.OK);
     }
 
     @Override
@@ -134,49 +156,57 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
     @Nullable
     @Override
     public Runnable start(Listener listener) {
+        this.listener = Preconditions.checkNotNull(listener, "listener");
+
+        if (enableKeepAlive) {
+            keepAliveManager = new KeepAliveManager(
+                    new KeepAliveManager.ClientKeepAlivePinger(this),
+                    scheduledExecutorService,
+                    keepAliveTimeNanos,
+                    keepAliveTimeoutNanos,
+                    keepAliveWithoutCalls
+            );
+            keepAliveManager.onTransportStarted();
+        }
+
         return () -> {
             this.writableSocket.connect();
-            this.transportListener = listener;
-            this.lifecycleManager = new ClientTransportLifecycleManager(
-                    this,
-                    listener
-            );
         };
     }
 
     @Override
     public void shutdown(Status reason) {
-        this.transportQueue.enqueue(new GracefulCloseCommand(reason), true);
+        synchronized (lock) {
+            if (goAwayStatus != null) {
+                return;
+            }
+
+            goAwayStatus = reason;
+            listener.transportShutdown(goAwayStatus);
+            stopIfNecessary();
+        }
     }
 
     @Override
     public void shutdownNow(Status reason) {
-        synchronized (this.lock) {
-            this.lifecycleManager.notifyShutdown(reason);
-            if (this.lifecycleManager.transportTerminated()) {
-                return ;
+        shutdown(reason);
+        synchronized (lock) {
+            Iterator<Map.Entry<Integer, ClientStreamImpl>> it = streams.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<Integer, ClientStreamImpl> entry = it.next();
+                it.remove();
+                entry.getValue().transportState().transportReportStatus(reason, false, new Metadata());
+                maybeClearInUse(entry.getValue());
             }
 
-            cancelPing(new IOException("shutdown"));
-
-            log.debug("all streams shutdown by shutdownNow");
-
-            finishTransport(reason);
-        }
-    }
-
-    private void cancelStreamsLocally(Status reason) {
-        Iterator<Map.Entry<Integer, ClientStreamImpl>> it = this.streams.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<Integer, ClientStreamImpl> entry = it.next();
-            it.remove();
-            entry.getValue().closeByForcelly(reason);
-            this.inUseState.updateObjectInUse(entry.getValue(), false);
+            stopIfNecessary();
         }
     }
 
     @Override
     public ClientStream newStream(MethodDescriptor<?, ?> method, Metadata headers, CallOptions callOptions, ClientStreamTracer[] tracers) {
+        Preconditions.checkNotNull(method, "method");
+        Preconditions.checkNotNull(headers, "headers");
         StatsTraceContext statsTraceContext = StatsTraceContext.newClientContext(
                 tracers, getAttributes(), headers
         );
@@ -184,14 +214,11 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
         log.debug("newStream for {}", method);
 
         synchronized (this.lock) {
-            Status shutdownStatus = this.lifecycleManager.getShutdownStatus();
-            if (shutdownStatus != null) {
-                return this.failedClientStream(statsTraceContext, shutdownStatus);
-            }
-
             TransportTracer transportTracer = new TransportTracer();
             ClientStreamImpl clientStream = new ClientStreamImpl(
+                    frameWriter,
                     this,
+                    lock,
                     writableBufferAllocator,
                     statsTraceContext,
                     transportTracer,
@@ -203,73 +230,127 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
         }
     }
 
-    public void startStream(ClientStreamImpl stream) {
+    @GuardedBy("lock")
+    public void streamReadyToStart(ClientStreamImpl clientStream, String fullMethodName, @Nullable byte[] payload) {
+        if (goAwayStatus != null) {
+            clientStream.transportState().transportReportStatus(
+                    goAwayStatus, ClientStreamListener.RpcProgress.MISCARRIED, true, new Metadata());
+//        } else if (streams.size() >= maxConcurrentStreams) {
+//            pendingStreams.add(clientStream);
+//            setInUse(clientStream);
+        } else {
+            startStream(clientStream, fullMethodName, payload);
+        }
+    }
+
+
+    @GuardedBy("lock")
+    private void startStream(ClientStreamImpl stream, String fullMethodName, @Nullable byte[] payload) {
+        Preconditions.checkState(
+                stream.transportState().id() == ClientStreamImpl.ABSENT_ID, "StreamId already assigned");
+
         int streamId = 0;
         try {
             streamId = this.streamIdGenerator.nextId();
         } catch (StreamIdOverflowException e) {
-            goAway();
+            startGoAway(Integer.MAX_VALUE, Status.OK.getCode(), Status.UNAVAILABLE.withDescription("Stream ids exhausted"));
             return ;
         }
-        this.streams.put(streamId, stream);
-        this.inUseState.updateObjectInUse(stream, true);
-        stream.start(streamId);
+
+        streams.put(streamId, stream);
+        setInUse(stream);
+
+        stream.transportState().start(streamId, fullMethodName, payload);
     }
 
-    public void finishStream(int streamId) {
-        log.warn("Stream[{}]: finishStream", streamId);
+    private void startGoAway(int lastKnownStreamId, @Nullable Status.Code errorCode, Status status) {
+        synchronized (lock) {
+            if (goAwayStatus == null) {
+                goAwayStatus = status;
+                listener.transportShutdown(status);
+            }
+            if (errorCode != null && !goAwaySent) {
+                // Send GOAWAY with lastGoodStreamId of 0, since we don't expect any server-initiated
+                // streams. The GOAWAY is part of graceful shutdown.
+                goAwaySent = true;
+                frameWriter.goAway(errorCode);
+            }
 
-        ClientStreamImpl stream = streams.remove(streamId);
-        if (stream == null) {
-            log.warn("Invalid stream id: " + streamId);
-            throw new RuntimeException("Invalid stream id: " + streamId);
+            Iterator<Map.Entry<Integer, ClientStreamImpl>> it = streams.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<Integer, ClientStreamImpl> entry = it.next();
+                if (entry.getKey() > lastKnownStreamId) {
+                    it.remove();
+                    entry.getValue().transportState().transportReportStatus(
+                            status, ClientStreamListener.RpcProgress.REFUSED, false, new Metadata());
+                    maybeClearInUse(entry.getValue());
+                }
+            }
+
+            stopIfNecessary();
         }
+    }
 
-        this.inUseState.updateObjectInUse(stream, false);
+    public void finishStream(
+            int streamId,
+            @Nullable Status status,
+            ClientStreamListener.RpcProgress rpcProgress,
+            boolean stopDelivery,
+            @Nullable Code errorCode,
+            @Nullable Metadata trailers
+    ) {
+        synchronized (lock) {
+            log.warn("Stream[{}]: finishStream", streamId);
 
-        if (this.lifecycleManager.getShutdownStatus() != null) {
-            notifyTerminateIfNoStream();
+            ClientStreamImpl stream = streams.remove(streamId);
+            if (stream != null) {
+                this.inUseState.updateObjectInUse(stream, false);
+                if (errorCode != null) {
+                    frameWriter.closeStream(streamId, Code.CANCELLED);
+                }
+                if (status != null) {
+                    stream
+                            .transportState()
+                            .transportReportStatus(
+                                    status,
+                                    rpcProgress,
+                                    stopDelivery,
+                                    trailers != null ? trailers : new Metadata()
+                            );
+                }
+
+                stopIfNecessary();
+                maybeClearInUse(stream);
+            }
         }
     }
 
     @Override
     public void ping(PingCallback callback, Executor executor) {
-        //TODO: verify channel status in transport queue
-
-        synchronized (this.lock) {
-            if (this.lifecycleManager.transportTerminated()) {
-                callback.onFailure(this.lifecycleManager.getShutdownThrowable());
-                return ;
+        Ping p = null;
+        boolean writePing;
+        synchronized (lock) {
+            if (stopped) {
+                return;
             }
-            sendPingFrameTraced(callback, executor);
+            if (ping != null) {
+                // we only allow one outstanding ping at a time, so just add the callback to
+                // any outstanding operation
+                p = ping;
+                writePing = false;
+            } else {
+                Stopwatch stopwatch = Stopwatch.createStarted();
+                stopwatch.start();
+                p = ping = new Ping(0L, stopwatch);
+                writePing = true;
+            }
+            if (writePing) {
+                frameWriter.ping();
+            }
         }
-    }
-
-    /**
-     * Sends a PING frame. If a ping operation is already outstanding, the callback in the message is
-     * registered to be called when the existing operation completes, and no new frame is sent.
-     */
-    @GuardedBy("lock")
-    private void sendPingFrameTraced(PingCallback callback, Executor executor) {
-        // we only allow one outstanding ping at a time, so just add the callback to
-        // any outstanding operation
-        if (this.ping != null) {
-            this.ping.addCallback(callback, executor);
-            return;
-        }
-
-        Stopwatch stopwatch = Stopwatch.createStarted();
-        this.ping = new Ping(0L, stopwatch);
-        this.ping.addCallback(callback, executor);
-        this.writableSocket.sendPing();
-    }
-
-    @GuardedBy("lock")
-    private void cancelPing(Throwable e) {
-        if (this.ping != null) {
-            this.ping.failed(e);
-            this.ping = null;
-        }
+        // If transport concurrently failed/stopped since we released the lock above, this could
+        // immediately invoke callback (which we shouldn't do while holding a lock)
+        p.addCallback(callback, executor);
     }
 
     @Override
@@ -282,20 +363,12 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
         return this.logId;
     }
 
-    public void sendControlMessage(ControlType controlType, GeneratedMessageV3 message) {
-        if (this.lifecycleManager.transportTerminated()) {
-            return ;
-        }
-
+    private void sendControlMessage(ControlType controlType, GeneratedMessageV3 message) {
         ByteBuffer sendBuffer = ProtocolHelper.serializeControlMessage(controlType, message);
         this.writableSocket.send(sendBuffer);
     }
 
-    public void sendGrpcPayload(int streamId, @Nullable WritableBuffer frame, boolean endOfStream) {
-        if (this.lifecycleManager.transportTerminated()) {
-            return ;
-        }
-
+    private void sendGrpcPayload(int streamId, @Nullable WritableBuffer frame, boolean endOfStream) {
         int size = 6;
         byte flags = 0;
         ByteBuffer readableBuffer = null;
@@ -333,8 +406,74 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
         };
     }
 
-    private void gracefulClose(GracefulCloseCommand cmd) {
-        this.lifecycleManager.notifyShutdown(cmd.getReason());
+    /**
+     * When the transport is in goAway state, we should stop it once all active streams finish.
+     */
+    @GuardedBy("lock")
+    private void stopIfNecessary() {
+        if (!(goAwayStatus != null && streams.isEmpty())) {
+            return;
+        }
+        if (stopped) {
+            return;
+        }
+        stopped = true;
+
+        if (keepAliveManager != null) {
+            keepAliveManager.onTransportTermination();
+        }
+
+        if (ping != null) {
+            ping.failed(getPingFailure());
+            ping = null;
+        }
+
+        if (!goAwaySent) {
+            // Send GOAWAY with lastGoodStreamId of 0, since we don't expect any server-initiated
+            // streams. The GOAWAY is part of graceful shutdown.
+            goAwaySent = true;
+            frameWriter.goAway(Status.Code.OK);
+        }
+
+        // We will close the underlying socket in the writing thread to break out the reader
+        // thread, which will close the frameReader and notify the listener.
+        frameWriter.close();
+        listener.transportTerminated();
+    }
+
+    @GuardedBy("lock")
+    private void maybeClearInUse(ClientStreamImpl stream) {
+        if (hasStream) {
+            if (streams.isEmpty()) {
+                hasStream = false;
+                if (keepAliveManager != null) {
+                    // We don't have any active streams. No need to do keepalives any more.
+                    // Again, we have to call this inside the lock to avoid the race between onTransportIdle
+                    // and onTransportActive.
+                    keepAliveManager.onTransportIdle();
+                }
+            }
+        }
+        if (stream.shouldBeCountedForInUse()) {
+            inUseState.updateObjectInUse(stream, false);
+        }
+    }
+
+    @GuardedBy("lock")
+    private void setInUse(ClientStreamImpl stream) {
+        if (!hasStream) {
+            hasStream = true;
+            if (keepAliveManager != null) {
+                // We have a new stream. We might need to do keepalives now.
+                // Note that we have to do this inside the lock to avoid calling
+                // KeepAliveManager.onTransportActive and KeepAliveManager.onTransportIdle in the wrong
+                // order.
+                keepAliveManager.onTransportActive();
+            }
+        }
+        if (stream.shouldBeCountedForInUse()) {
+            inUseState.updateObjectInUse(stream, true);
+        }
     }
 
     private final ProtocolHandler<Void> protocolHandler = new ProtocolHandler<Void>() {
@@ -357,9 +496,9 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
             }
             clientListener.onHandshakeResult((C) AbstractCgrpcClientTransport.this, payload);
             if (payload.getResolved()) {
-                transportListener.transportReady();
+                listener.transportReady();
             } else {
-                transportListener.transportShutdown(Status.PERMISSION_DENIED);
+                listener.transportShutdown(Status.PERMISSION_DENIED);
             }
         }
 
@@ -370,82 +509,176 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
 
         @Override
         public void handleStreamHeader(Void unused, StreamHeader payload) {
-            ClientStreamImpl stream = streams.get(payload.getStreamId());
-            if (stream == null) {
-                log.warn("Invalid stream id: " + payload.getStreamId());
-                throw new RuntimeException("Invalid stream id: " + payload.getStreamId());
-            }
-            Metadata metadata = ProtocolHelper.metadataDeserialize(payload.getHeadersList());
-            //TODO: more efficiently
-            int metadataSize = MetadataUtils.metadataSize(metadata);
-            if (metadataSize > maxInboundMetadataSize) {
-                log.warn("metadataSize({}) > maxInboundMetadataSize({})", metadataSize, maxInboundMessageSize);
-                stream.cancel(Status.RESOURCE_EXHAUSTED);
-                return ;
-            }
-            stream.handleStreamHeader(metadata);
+            handleMetadata(payload.getStreamId(), false, payload.getHeadersList(), null);
         }
 
         @Override
         public void handleGrpcStream(Void unused, int streamId, EnumSet<GrpcStreamFlag> flags, ByteBuffer data) {
-            ClientStreamImpl stream = streams.get(streamId);
+            ClientStreamImpl stream = getStream(streamId);
             if (stream == null) {
-                throw new RuntimeException("Invalid stream id: " + streamId);
+                if (mayHaveCreatedStream(streamId)) {
+//                    synchronized (lock) {
+//                        frameWriter.rstStream(streamId, ErrorCode.STREAM_CLOSED);
+//                    }
+                } else {
+//                    onError(ErrorCode.PROTOCOL_ERROR, "Received data for unknown stream: " + streamId);
+                    return;
+                }
+            } else {
+                boolean endOfStream = flags.contains(GrpcStreamFlag.EndOfFrame);
+                synchronized (lock) {
+                    stream.transportState().transportDataReceived(data, endOfStream);
+                }
             }
-            stream.handleGrpcStream(flags, data);
         }
 
         @Override
         public void handleCloseStream(Void unused, CloseStream payload) {
-            ClientStreamImpl stream = streams.get(payload.getStreamId());
-            if (stream == null) {
-                throw new RuntimeException("Invalid stream id: " + payload.getStreamId());
-            }
-
             Status status = ProtocolHelper.statusFromProto(payload.getStatus());
-            Metadata trailers = ProtocolHelper.metadataDeserialize(payload.getTrailersList());
-
-            if (MetadataUtils.metadataSize(trailers) > maxInboundMetadataSize) {
-                stream.cancel(Status.RESOURCE_EXHAUSTED);
-            } else {
-                stream.handleCloseStream(status, trailers);
-            }
-
-            finishStream(stream.getStreamId());
+            handleMetadata(payload.getStreamId(), true, payload.getTrailersList(), status);
         }
 
         @Override
         public void handleFinishTransport(Void unused, FinishTransport payload) {
             log.trace("handleFinishTransport");
-            finishTransport(ProtocolHelper.statusFromProto(payload.getStatus()));
+
+            Status status = Status.fromCodeValue(payload.getStatus().getCode())
+                    .withDescription("Received Goaway");
+            startGoAway(0, null, status);
+        }
+
+        private void handleMetadata(int streamId, boolean endOfStream, List<ByteString> metadataList, @Nullable Status status) {
+            boolean unknownStream = false;
+            Status failedStatus = null;
+
+            Metadata metadata = ProtocolHelper.metadataDeserialize(metadataList);
+            int metadataSize = MetadataUtils.metadataSize(metadata);
+            if (metadataSize > maxInboundMetadataSize) {
+                failedStatus = Status.RESOURCE_EXHAUSTED.withDescription(
+                        String.format(
+                                Locale.US,
+                                "Response %s metadata larger than %d: %d",
+                                "header",
+                                maxInboundMetadataSize,
+                                metadataSize));
+                log.warn("metadataSize({}) > maxInboundMetadataSize({})", metadataSize, maxInboundMessageSize, failedStatus.asException());
+            }
+
+            synchronized (lock) {
+                ClientStreamImpl stream = streams.get(streamId);
+                if (stream == null) {
+                    if (mayHaveCreatedStream(streamId)) {
+                        // frameWriter.rstStream(streamId, ErrorCode.STREAM_CLOSED);
+                    } else {
+                        unknownStream = true;
+                    }
+                } else {
+                    if (failedStatus == null) {
+                        if (endOfStream) {
+                            Preconditions.checkNotNull(status, "status");
+                            stream.transportState().transportTrailersReceived(metadata, status);
+                        } else {
+                            stream.transportState().transportHeadersReceived(metadata);
+                        }
+                    } else {
+                        if (!endOfStream) {
+                            frameWriter.closeStream(streamId, Code.CANCELLED);
+                        }
+                        stream.transportState().transportReportStatus(failedStatus, false, new Metadata());
+                    }
+                }
+            }
+            if (unknownStream) {
+                // We don't expect any server-initiated streams.
+                // onError(ErrorCode.PROTOCOL_ERROR, "Received header for unknown stream: " + streamId);
+                log.warn("Received header for unknown stream: " + streamId);
+            }
         }
     };
 
-    @Override
-    public void afterShutdown() {
-        log.trace("afterShutdown");
-        this.notifyTerminateIfNoStream();
-    }
+    public final FrameWriter frameWriter = new FrameWriter() {
+        @Override
+        public void newStream(int streamId, List<ByteString> serializedMetadata, String fullMethodName, @Nullable byte[] payload) {
+            NewStream.Builder builder = NewStream.newBuilder()
+                    .setStreamId(streamId)
+                    .addAllMetadata(serializedMetadata)
+                    .setMethodName(fullMethodName);
+            if (payload != null) {
+                builder.setPayload(ByteString.copyFrom(payload));
+            }
+            NewStream newStream = builder.build();
+            transportQueue.enqueue(() -> {
+                sendControlMessage(ControlType.NewStream, newStream);
+            }, true);
+        }
 
-    @Override
-    public void afterTerminate() {
-        log.trace("afterTerminate");
-        this.writableSocket.close();
-    }
+        @Override
+        public void data(int streamId, WritableBuffer frame, boolean endOfStream) {
+            transportQueue.enqueue(() -> {
+                sendGrpcPayload(streamId, frame, endOfStream);
+            }, true);
+        }
 
-    private void notifyTerminateIfNoStream() {
-        if (this.streams.isEmpty() && this.lifecycleManager.getShutdownStatus() != null) {
-            this.finishTransport(Status.OK);
+        @Override
+        public void closeStream(int streamId, Code code) {
+            CloseStream streamTrailers = CloseStream.newBuilder()
+                    .setStreamId(streamId)
+                    .setStatus(
+                            com.google.rpc.Status.newBuilder()
+                                    .setCode(code.getNumber())
+                                    .build()
+                    )
+                    .build();
+            transportQueue.enqueue(() -> {
+                sendControlMessage(ControlType.CloseStream, streamTrailers);
+            }, true);
+        }
+
+        @Override
+        public void goAway(Status.Code code) {
+            transportQueue.enqueue(() -> {
+                FinishTransport finishTransport = FinishTransport.newBuilder()
+                        .setStatus(ProtocolHelper.statusToProto(Status.fromCode(code)))
+                        .build();
+                sendControlMessage(ControlType.FinishTransport, finishTransport);
+            }, true);
+        }
+
+        @Override
+        public void close() {
+            transportQueue.enqueue(() -> {
+                writableSocket.close();
+            }, true);
+        }
+
+        @Override
+        public void ping() {
+            transportQueue.enqueue(() -> {
+                writableSocket.sendPing();
+            }, true);
+        }
+    };
+
+    ClientStreamImpl getStream(int streamId) {
+        synchronized (lock) {
+            return streams.get(streamId);
         }
     }
 
-    private void finishTransport(Status status) {
-        try {
-            cancelStreamsLocally(status);
-        } catch (Exception e) {
-            e.printStackTrace();
+    private Throwable getPingFailure() {
+        synchronized (lock) {
+            if (goAwayStatus != null) {
+                return goAwayStatus.asException();
+            } else {
+                return Status.UNAVAILABLE.withDescription("Connection closed").asException();
+            }
         }
-        this.lifecycleManager.notifyTerminated(status);
+    }
+
+    boolean mayHaveCreatedStream(int streamId) {
+        synchronized (lock) {
+            return streamId < streamIdGenerator.peekNextId() && (streamId & 1) == 1;
+        }
     }
 
     @Override
@@ -460,6 +693,9 @@ public class AbstractCgrpcClientTransport<C extends AbstractCgrpcClientTransport
     @Override
     public void onMessage(ByteBuffer receiveBuffer) {
         try {
+            if (keepAliveManager != null) {
+                keepAliveManager.onDataReceived();
+            }
             ProtocolHelper.handleMessage(protocolHandler, null, receiveBuffer);
         } catch (Exception e) {
             clientListener.onError((C) AbstractCgrpcClientTransport.this, e);

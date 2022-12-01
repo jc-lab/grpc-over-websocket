@@ -73,10 +73,6 @@ public class GrpcOverWebsocketServer implements InternalServer, GrpcOverWebsocke
             checkState(!this.started, "Already started");
             checkState(!this.shutdown, "Shutting down");
 
-            if (Thread.interrupted()) {
-                throw new IOException(new InterruptedException());
-            }
-
             this.started = true;
 
             this.serverHandler.onStart(this);

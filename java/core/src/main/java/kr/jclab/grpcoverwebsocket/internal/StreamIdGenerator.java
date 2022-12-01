@@ -33,4 +33,8 @@ public class StreamIdGenerator {
         }
         return id;
     }
+
+    public int peekNextId() {
+        return this.streamId.get() + 2;
+    }
 }
