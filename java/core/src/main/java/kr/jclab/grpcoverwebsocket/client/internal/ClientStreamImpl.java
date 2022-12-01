@@ -3,7 +3,6 @@ package kr.jclab.grpcoverwebsocket.client.internal;
 import com.google.protobuf.ByteString;
 import io.grpc.*;
 import io.grpc.internal.*;
-import kr.jclab.grpcoverwebsocket.client.AbstractCgrpcClientTransport;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.CloseStream;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.NewStream;
 import kr.jclab.grpcoverwebsocket.internal.ByteBufferReadableBuffer;

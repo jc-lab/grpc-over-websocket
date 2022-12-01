@@ -2,6 +2,7 @@ package kr.jclab.grpcoverwebsocket.client;
 
 import io.grpc.*;
 import io.grpc.internal.*;
+import kr.jclab.grpcoverwebsocket.client.internal.AbstractCgrpcClientTransport;
 import kr.jclab.grpcoverwebsocket.portable.WritableSocket;
 import lombok.extern.slf4j.Slf4j;
 import org.java_websocket.WebSocket;

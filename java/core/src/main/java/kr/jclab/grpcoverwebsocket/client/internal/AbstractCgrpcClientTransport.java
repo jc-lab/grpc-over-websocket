@@ -1,13 +1,14 @@
-package kr.jclab.grpcoverwebsocket.client;
+package kr.jclab.grpcoverwebsocket.client.internal;
 
 import com.google.common.base.Stopwatch;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.GeneratedMessageV3;
 import io.grpc.*;
 import io.grpc.internal.*;
+import kr.jclab.grpcoverwebsocket.client.ClientListener;
+import kr.jclab.grpcoverwebsocket.client.ClientTransportLifecycleManager;
+import kr.jclab.grpcoverwebsocket.client.GrpcOverWebsocketClientConnection;
 import kr.jclab.grpcoverwebsocket.client.command.GracefulCloseCommand;
-import kr.jclab.grpcoverwebsocket.client.internal.ClientStreamImpl;
-import kr.jclab.grpcoverwebsocket.client.internal.Ping;
 import kr.jclab.grpcoverwebsocket.core.protocol.v1.*;
 import kr.jclab.grpcoverwebsocket.internal.*;
 import kr.jclab.grpcoverwebsocket.portable.ClientSocket;
