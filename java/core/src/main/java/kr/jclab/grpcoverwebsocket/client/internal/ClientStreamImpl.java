@@ -7,6 +7,7 @@ import io.grpc.*;
 import io.grpc.internal.*;
 import kr.jclab.grpcoverwebsocket.internal.ByteBufferReadableBuffer;
 import kr.jclab.grpcoverwebsocket.internal.ByteBufferWritableBufferAllocator;
+import kr.jclab.grpcoverwebsocket.internal.FrameWriter;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.annotation.Nullable;
