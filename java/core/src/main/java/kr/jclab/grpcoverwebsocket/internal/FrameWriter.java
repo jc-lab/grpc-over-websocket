@@ -1,4 +1,4 @@
-package kr.jclab.grpcoverwebsocket.client.internal;
+package kr.jclab.grpcoverwebsocket.internal;
 
 import com.google.protobuf.ByteString;
 import com.google.rpc.Code;
