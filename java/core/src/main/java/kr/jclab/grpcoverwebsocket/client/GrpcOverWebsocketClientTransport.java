@@ -89,6 +89,7 @@ public class GrpcOverWebsocketClientTransport
                 super.onWebsocketPong(conn, f);
             }
         };
+        clientListener.onWebsocketCreated(this, this.webSocketClient);
 
         this.writableSocket = this;
     }
