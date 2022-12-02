@@ -13,6 +13,7 @@ import org.java_websocket.handshake.ServerHandshake;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 
 @Slf4j
 public class GrpcOverWebsocketClientTransport
@@ -24,6 +25,7 @@ public class GrpcOverWebsocketClientTransport
 
     public GrpcOverWebsocketClientTransport(
             ExecutorService transportExecutorService,
+            ScheduledExecutorService scheduledExecutorService,
             int maxInboundMetadataSize,
             int maxInboundMessageSize,
             ClientTransportFactory.ClientTransportOptions options,
@@ -33,6 +35,7 @@ public class GrpcOverWebsocketClientTransport
     ) {
         super(
                 transportExecutorService,
+                scheduledExecutorService,
                 maxInboundMetadataSize,
                 maxInboundMessageSize,
                 options,
@@ -101,7 +104,9 @@ public class GrpcOverWebsocketClientTransport
 
     @Override
     public void send(ByteBuffer byteBuffer) {
-        this.webSocketClient.send(byteBuffer);
+        if (this.webSocketClient.isOpen()) {
+            this.webSocketClient.send(byteBuffer);
+        }
     }
 
     @Override

@@ -2,9 +2,7 @@ package kr.jclab.grpcoverwebsocket.example;
 
 import io.grpc.ManagedChannel;
 import io.grpc.stub.StreamObserver;
-import kr.jclab.grpcoverwebsocket.client.ClientListener;
-import kr.jclab.grpcoverwebsocket.client.GrpcOverWebsocketChannelBuilder;
-import kr.jclab.grpcoverwebsocket.client.GrpcOverWebsocketClientConnection;
+import kr.jclab.grpcoverwebsocket.client.*;
 import kr.jclab.grpcoverwebsocket.sample.model.*;
 import lombok.extern.slf4j.Slf4j;
 
@@ -17,7 +15,7 @@ import java.util.concurrent.CompletableFuture;
 public class ClientApplication {
     public void run() throws Exception {
         GrpcOverWebsocketChannelBuilder builder = GrpcOverWebsocketChannelBuilder.forTarget("ws://127.0.0.1:9999/ws");
-        builder.setClientListener(new ClientListener() {
+        builder.setClientListener(new WebsocketClientListener<GrpcOverWebsocketClientTransport>() {
         });
         ManagedChannel clientChannel = builder.build();
 
